@@ -52,9 +52,7 @@ pub static UNMORTGAGE_PRICE_BY_TILE_ID: [Money; TILE_COUNT] = build_tile_id_lut!
 pub static HOUSE_PURCHASE_PRICE_BY_TILE_ID: [Money; TILE_COUNT] = build_tile_id_lut!(0, |tile_definition| tile_definition.kind.house_purchase_price());
 pub static TAX_AMOUNT_BY_TILE_ID: [Money; TILE_COUNT] = build_tile_id_lut!(0, |tile_definition| tile_definition.kind.tax_amount());
 
-pub static RENT_BY_TILE_ID_BY_RENT_LEVEL: [[Money; RENT_LEVEL_COUNT]; TILE_COUNT] = build_tile_id_lut!([0; RENT_LEVEL_COUNT], |tile_definition| derive_rent_by_rent_level(
-    &tile_definition.kind
-));
+pub static RENT_BY_TILE_ID_BY_RENT_LEVEL: [[Money; RENT_LEVEL_COUNT]; TILE_COUNT] = build_tile_id_lut!([0; RENT_LEVEL_COUNT], |tile_definition| derive_rent_by_rent_level(&tile_definition.kind));
 
 pub const TILE_SET_MASK_BY_OWNERSHIP_GROUP: [TileSetMask; OwnershipGroup::COUNT] = {
     let mut tile_id = 0;
@@ -120,14 +118,8 @@ const _: () = {
 
     assert!(matches!(TILE_DEFINITIONS[GO_TILE_ID as usize].kind, TileDefinitionKind::Go));
     assert!(matches!(TILE_DEFINITIONS[JAIL_TILE_ID as usize].kind, TileDefinitionKind::Jail));
-    assert!(matches!(
-        TILE_DEFINITIONS[FREE_PARKING_TILE_ID as usize].kind,
-        TileDefinitionKind::FreeParking
-    ));
-    assert!(matches!(
-        TILE_DEFINITIONS[GO_TO_JAIL_TILE_ID as usize].kind,
-        TileDefinitionKind::GoToJail
-    ));
+    assert!(matches!(TILE_DEFINITIONS[FREE_PARKING_TILE_ID as usize].kind, TileDefinitionKind::FreeParking));
+    assert!(matches!(TILE_DEFINITIONS[GO_TO_JAIL_TILE_ID as usize].kind, TileDefinitionKind::GoToJail));
 
     assert!(TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::Brown as usize].count_ones() == 2);
     assert!(TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::LightBlue as usize].count_ones() == 3);
@@ -189,14 +181,8 @@ mod tests {
         assert_eq!(OWNERSHIP_GROUP_BY_TILE_ID[BOARDWALK_TILE_ID], Some(OwnershipGroup::DarkBlue));
         assert_eq!(PURCHASE_PRICE_BY_TILE_ID[BOARDWALK_TILE_ID], 400);
         assert_eq!(HOUSE_PURCHASE_PRICE_BY_TILE_ID[BOARDWALK_TILE_ID], 200);
-        assert_eq!(
-            RENT_BY_TILE_ID_BY_RENT_LEVEL[BOARDWALK_TILE_ID],
-            [50, 100, 200, 600, 1400, 1700, 2000, 0]
-        );
-        assert_eq!(
-            RENT_BY_TILE_ID_BY_RENT_LEVEL[BALTIC_AVENUE_TILE_ID][UNIMPROVED_MONOPOLY_RENT_LEVEL],
-            8
-        );
+        assert_eq!(RENT_BY_TILE_ID_BY_RENT_LEVEL[BOARDWALK_TILE_ID], [50, 100, 200, 600, 1400, 1700, 2000, 0]);
+        assert_eq!(RENT_BY_TILE_ID_BY_RENT_LEVEL[BALTIC_AVENUE_TILE_ID][UNIMPROVED_MONOPOLY_RENT_LEVEL], 8);
     }
 
     #[test]
@@ -218,10 +204,7 @@ mod tests {
 
     #[test]
     fn derives_tiles() {
-        assert_eq!(
-            TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::Brown as usize],
-            1 << 1 | 1 << 3
-        );
+        assert_eq!(TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::Brown as usize], 1 << 1 | 1 << 3);
         assert_eq!(RAILROAD_TILE_SET_MASK, 1 << 5 | 1 << 15 | 1 << 25 | 1 << 35);
         assert_eq!(UTILITY_TILE_SET_MASK, 1 << 12 | 1 << 28);
         assert_eq!(OWNABLE_TILE_SET_MASK.count_ones(), 28);

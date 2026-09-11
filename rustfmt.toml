@@ -3,6 +3,6 @@ match_block_trailing_comma = true
 brace_style = "SameLineWhere"
 max_width = 200
 fn_params_layout = "Vertical"
-fn_call_width = 80
+fn_call_width = 120
 control_brace_style = "ClosingNextLine"
 imports_layout = "Vertical"

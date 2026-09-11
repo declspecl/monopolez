@@ -11,7 +11,7 @@ pub type TileId = u8;
 // total tiles (40) < 64 bits for bitmask
 pub type TileSetMask = u64;
 
-// normalize all money values to u16 for consistency
+// bank has $20,580, keep all game money as u16 for consistency
 pub type Money = u16;
 
 pub type RentLevel = usize;
