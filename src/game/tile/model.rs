@@ -11,10 +11,16 @@ pub type TileId = u8;
 // total tiles (40) < 64 bits for bitmask
 pub type TileSetMask = u64;
 
-// bank has $20,580, keep all game money as u16 for consistency
+// static amounts (prices, rents, taxes) max out at 2000 < 65,535
 pub type Money = u16;
 
+// bank never runs out, so balances are unbounded in theory, but u32 max (~4.29B) is the absolute max cash
+pub type Cash = u32;
+
 pub type RentLevel = usize;
+
+// total properties (22) < 255
+pub type PropertyId = u8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileDefinition {

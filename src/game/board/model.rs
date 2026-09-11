@@ -1,5 +1,4 @@
-use super::data::MAX_PLAYER_COUNT;
-use crate::game::tile::data::TILE_COUNT;
+use crate::game::tile::data::PROPERTY_COUNT;
 use crate::game::tile::model::TileSetMask;
 
 // max player count (8) < 255
@@ -13,12 +12,17 @@ pub type BuildingCount = u8;
 
 #[repr(align(64))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BoardState {
-    pub owned_tiles_by_player_id: [TileSetMask; MAX_PLAYER_COUNT],
+pub struct BoardState<const PLAYER_COUNT: usize> {
+    pub owned_tiles_by_player_id: [TileSetMask; PLAYER_COUNT],
     pub mortgaged_tiles: TileSetMask,
-    pub improvement_level_by_tile_id: [PropertyImprovementLevel; TILE_COUNT],
+    pub improvement_level_by_property_id: [PropertyImprovementLevel; PROPERTY_COUNT],
     pub bank_house_count: BuildingCount,
     pub bank_hotel_count: BuildingCount,
 }
 
-const _: () = assert!(size_of::<BoardState>() == 128);
+const _: () = {
+    assert!(size_of::<BoardState<2>>() == 64);
+    assert!(size_of::<BoardState<3>>() == 64);
+    assert!(size_of::<BoardState<4>>() == 64);
+    assert!(size_of::<BoardState<8>>() == 128);
+};

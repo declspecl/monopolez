@@ -8,6 +8,7 @@ use super::model::{
 };
 
 pub const TILE_COUNT: usize = 40;
+pub const PROPERTY_COUNT: usize = 22;
 
 pub const GO_TILE_ID: TileId = 0;
 pub const JAIL_TILE_ID: TileId = 10;

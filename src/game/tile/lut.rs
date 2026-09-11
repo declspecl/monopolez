@@ -3,6 +3,7 @@ use super::data::{
     GO_TILE_ID,
     GO_TO_JAIL_TILE_ID,
     JAIL_TILE_ID,
+    PROPERTY_COUNT,
     RAILROAD_RENT_BY_POSSESSION_COUNT,
     TILE_COUNT,
     TILE_DEFINITIONS,
@@ -12,8 +13,10 @@ use super::data::{
 use super::model::{
     Money,
     OwnershipGroup,
+    PropertyId,
     RentLevel,
     TileDefinitionKind,
+    TileId,
     TileKind,
     TileSetMask,
 };
@@ -26,7 +29,7 @@ pub const THREE_HOUSES_RENT_LEVEL: RentLevel = 4;
 pub const FOUR_HOUSES_RENT_LEVEL: RentLevel = 5;
 pub const HOTEL_RENT_LEVEL: RentLevel = 6;
 
-// 7 (above) * 2 byte cells = 14 bytes. 2 bytes padding for easy alignment & shift math
+// 7 (above) * 2 byte cells = 14 bytes. 2 bytes padding makes each row 16 bytes, so rows are located by shift instead of multiply
 pub const RENT_LEVEL_COUNT: usize = 8;
 
 macro_rules! build_tile_id_lut {
@@ -53,6 +56,38 @@ pub static HOUSE_PURCHASE_PRICE_BY_TILE_ID: [Money; TILE_COUNT] = build_tile_id_
 pub static TAX_AMOUNT_BY_TILE_ID: [Money; TILE_COUNT] = build_tile_id_lut!(0, |tile_definition| tile_definition.kind.tax_amount());
 
 pub static RENT_BY_TILE_ID_BY_RENT_LEVEL: [[Money; RENT_LEVEL_COUNT]; TILE_COUNT] = build_tile_id_lut!([0; RENT_LEVEL_COUNT], |tile_definition| derive_rent_by_rent_level(&tile_definition.kind));
+
+pub static PROPERTY_ID_BY_TILE_ID: [Option<PropertyId>; TILE_COUNT] = {
+    let mut tile_id = 0;
+    let mut next_property_id = 0;
+    let mut property_id_by_tile_id = [None; TILE_COUNT];
+    while tile_id < TILE_COUNT {
+        if matches!(TILE_DEFINITIONS[tile_id].kind, TileDefinitionKind::Property { .. }) {
+            property_id_by_tile_id[tile_id] = Some(next_property_id);
+            next_property_id += 1;
+        }
+
+        tile_id += 1;
+    }
+
+    property_id_by_tile_id
+};
+
+pub static TILE_ID_BY_PROPERTY_ID: [TileId; PROPERTY_COUNT] = {
+    let mut tile_id = 0;
+    let mut next_property_id = 0;
+    let mut tile_id_by_property_id = [0; PROPERTY_COUNT];
+    while tile_id < TILE_COUNT {
+        if matches!(TILE_DEFINITIONS[tile_id].kind, TileDefinitionKind::Property { .. }) {
+            tile_id_by_property_id[next_property_id] = tile_id as TileId;
+            next_property_id += 1;
+        }
+
+        tile_id += 1;
+    }
+
+    tile_id_by_property_id
+};
 
 pub const TILE_SET_MASK_BY_OWNERSHIP_GROUP: [TileSetMask; OwnershipGroup::COUNT] = {
     let mut tile_id = 0;
@@ -132,6 +167,7 @@ const _: () = {
     assert!(RAILROAD_TILE_SET_MASK.count_ones() == 4);
     assert!(UTILITY_TILE_SET_MASK.count_ones() == 2);
 
+    let mut property_tile_count = 0;
     let mut chance_tile_count = 0;
     let mut community_chest_tile_count = 0;
     let mut tax_tile_count = 0;
@@ -140,6 +176,8 @@ const _: () = {
     while tile_id < TILE_COUNT {
         match TILE_DEFINITIONS[tile_id].kind {
             TileDefinitionKind::Property { purchase_price, rent, .. } => {
+                property_tile_count += 1;
+
                 assert!(purchase_price > 0, "property purchase price should be positive");
                 assert!(
                     rent.unimproved < rent.one_house
@@ -159,6 +197,7 @@ const _: () = {
         tile_id += 1;
     }
 
+    assert!(property_tile_count == PROPERTY_COUNT);
     assert!(chance_tile_count == 3);
     assert!(community_chest_tile_count == 3);
     assert!(tax_tile_count == 2);
@@ -168,6 +207,7 @@ const _: () = {
 mod tests {
     use super::*;
 
+    const MEDITERRANEAN_AVENUE_TILE_ID: usize = 1;
     const BALTIC_AVENUE_TILE_ID: usize = 3;
     const READING_RAILROAD_TILE_ID: usize = 5;
     const ELECTRIC_COMPANY_TILE_ID: usize = 12;
@@ -208,5 +248,18 @@ mod tests {
         assert_eq!(RAILROAD_TILE_SET_MASK, 1 << 5 | 1 << 15 | 1 << 25 | 1 << 35);
         assert_eq!(UTILITY_TILE_SET_MASK, 1 << 12 | 1 << 28);
         assert_eq!(OWNABLE_TILE_SET_MASK.count_ones(), 28);
+    }
+
+    #[test]
+    fn maps_between_property_ids_and_tile_ids() {
+        assert_eq!(PROPERTY_ID_BY_TILE_ID[MEDITERRANEAN_AVENUE_TILE_ID], Some(0));
+        assert_eq!(PROPERTY_ID_BY_TILE_ID[BOARDWALK_TILE_ID], Some(21));
+        assert_eq!(PROPERTY_ID_BY_TILE_ID[READING_RAILROAD_TILE_ID], None);
+        assert_eq!(TILE_ID_BY_PROPERTY_ID[21], BOARDWALK_TILE_ID as TileId);
+
+        for property_id in 0..PROPERTY_COUNT {
+            let tile_id = TILE_ID_BY_PROPERTY_ID[property_id] as usize;
+            assert_eq!(PROPERTY_ID_BY_TILE_ID[tile_id], Some(property_id as PropertyId));
+        }
     }
 }
