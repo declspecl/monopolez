@@ -1,3 +1,21 @@
+use super::data::{
+    MORTGAGE_VALUE_PERCENT_OF_PURCHASE_PRICE,
+    RAILROAD_TILE_PURCHASE_PRICE,
+    UNMORTGAGE_INTEREST_PERCENT_OF_MORTGAGE_VALUE,
+    UTILITY_TILE_PURCHASE_PRICE,
+};
+
+// total tiles (40) < 255
+pub type TileId = u8;
+
+// total tiles (40) < 64 bits for bitmask
+pub type TileSetMask = u64;
+
+// normalize all money values to u16 for consistency
+pub type Money = u16;
+
+pub type RentLevel = usize;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileDefinition {
     pub name: &'static str,
@@ -6,10 +24,10 @@ pub struct TileDefinition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TileDefinitionKind {
-    Property { color: PropertyColor, purchase_price: u16, rent: PropertyRent },
+    Property { color: PropertyColor, purchase_price: Money, rent: PropertyRent },
     Railroad,
     Utility,
-    Tax { amount: u16 },
+    Tax { amount: Money },
     Chance,
     CommunityChest,
     Go,
@@ -19,7 +37,7 @@ pub enum TileDefinitionKind {
 }
 
 impl TileDefinitionKind {
-    pub const fn to_tile_kind(&self) -> TileKind {
+    pub const fn tile_kind(&self) -> TileKind {
         match self {
             Self::Property { .. } => TileKind::Property,
             Self::Railroad => TileKind::Railroad,
@@ -33,16 +51,59 @@ impl TileDefinitionKind {
             Self::GoToJail => TileKind::GoToJail,
         }
     }
+
+    pub const fn ownership_group(&self) -> Option<OwnershipGroup> {
+        match *self {
+            Self::Property { color, .. } => Some(color.ownership_group()),
+            Self::Railroad => Some(OwnershipGroup::Railroad),
+            Self::Utility => Some(OwnershipGroup::Utility),
+            _ => None,
+        }
+    }
+
+    pub const fn purchase_price(&self) -> Money {
+        match *self {
+            Self::Property { purchase_price, .. } => purchase_price,
+            Self::Railroad => RAILROAD_TILE_PURCHASE_PRICE,
+            Self::Utility => UTILITY_TILE_PURCHASE_PRICE,
+            _ => 0,
+        }
+    }
+
+    pub const fn calculate_mortgage_value(&self) -> Money {
+        (self.purchase_price() * MORTGAGE_VALUE_PERCENT_OF_PURCHASE_PRICE) / 100
+    }
+
+    pub const fn calculate_unmortgage_price(&self) -> Money {
+        let mortgage_value = self.calculate_mortgage_value();
+        let unmortgage_interest = (mortgage_value * UNMORTGAGE_INTEREST_PERCENT_OF_MORTGAGE_VALUE).div_ceil(100);
+
+        mortgage_value + unmortgage_interest
+    }
+
+    pub const fn house_purchase_price(&self) -> Money {
+        match *self {
+            Self::Property { color, .. } => color.house_purchase_price(),
+            _ => 0,
+        }
+    }
+
+    pub const fn tax_amount(&self) -> Money {
+        match *self {
+            Self::Tax { amount } => amount,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PropertyRent {
-    pub unimproved: u16,
-    pub one_house: u16,
-    pub two_houses: u16,
-    pub three_houses: u16,
-    pub four_houses: u16,
-    pub hotel: u16,
+    pub unimproved: Money,
+    pub one_house: Money,
+    pub two_houses: Money,
+    pub three_houses: Money,
+    pub four_houses: Money,
+    pub hotel: Money,
 }
 
 #[repr(u8)]
@@ -74,7 +135,7 @@ pub enum PropertyColor {
 }
 
 impl PropertyColor {
-    pub const fn to_ownership_group(self) -> OwnershipGroup {
+    pub const fn ownership_group(self) -> OwnershipGroup {
         match self {
             Self::Brown => OwnershipGroup::Brown,
             Self::LightBlue => OwnershipGroup::LightBlue,
@@ -87,7 +148,7 @@ impl PropertyColor {
         }
     }
 
-    pub const fn get_house_purchase_price(self) -> u16 {
+    pub const fn house_purchase_price(self) -> Money {
         match self {
             Self::Brown => 50,
             Self::LightBlue => 50,

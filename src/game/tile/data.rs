@@ -1,6 +1,11 @@
-use super::model::{PropertyColor, PropertyRent, TileDefinition, TileDefinitionKind};
-
-pub type TileId = u8;
+use super::model::{
+    Money,
+    PropertyColor,
+    PropertyRent,
+    TileDefinition,
+    TileDefinitionKind,
+    TileId,
+};
 
 pub const TILE_COUNT: usize = 40;
 
@@ -9,10 +14,10 @@ pub const JAIL_TILE_ID: TileId = 10;
 pub const FREE_PARKING_TILE_ID: TileId = 20;
 pub const GO_TO_JAIL_TILE_ID: TileId = 30;
 
-pub const RAILROAD_TILE_PURCHASE_PRICE: u16 = 200;
-pub const RAILROAD_RENT_BY_POSSESSION_COUNT: [u16; 4] = [25, 50, 100, 200];
+pub const RAILROAD_TILE_PURCHASE_PRICE: Money = 200;
+pub const RAILROAD_RENT_BY_POSSESSION_COUNT: [Money; 4] = [25, 50, 100, 200];
 
-pub const UTILITY_TILE_PURCHASE_PRICE: u16 = 150;
+pub const UTILITY_TILE_PURCHASE_PRICE: Money = 150;
 pub const UTILITY_RENT_DICE_MULTIPLIER_BY_POSSESSION_COUNT: [u16; 2] = [4, 10];
 
 pub const UNIMPROVED_MONOPOLY_RENT_MULTIPLIER: u16 = 2;
