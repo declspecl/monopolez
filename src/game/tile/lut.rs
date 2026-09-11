@@ -58,16 +58,16 @@ pub static RENT_BY_TILE_ID_BY_RENT_LEVEL: [[Money; RENT_LEVEL_COUNT]; TILE_COUNT
 
 pub const TILE_SET_MASK_BY_OWNERSHIP_GROUP: [TileSetMask; OwnershipGroup::COUNT] = {
     let mut tile_id = 0;
-    let mut tile_set_mask_by_ownership_group = [0; OwnershipGroup::COUNT];
+    let mut tiles_by_ownership_group = [0; OwnershipGroup::COUNT];
     while tile_id < TILE_COUNT {
         if let Some(ownership_group) = TILE_DEFINITIONS[tile_id].kind.ownership_group() {
-            tile_set_mask_by_ownership_group[ownership_group as usize] |= 1 << tile_id;
+            tiles_by_ownership_group[ownership_group as usize] |= 1 << tile_id;
         }
 
         tile_id += 1;
     }
 
-    tile_set_mask_by_ownership_group
+    tiles_by_ownership_group
 };
 
 pub const RAILROAD_TILE_SET_MASK: TileSetMask = TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::Railroad as usize];
@@ -75,13 +75,13 @@ pub const UTILITY_TILE_SET_MASK: TileSetMask = TILE_SET_MASK_BY_OWNERSHIP_GROUP[
 
 pub const OWNABLE_TILE_SET_MASK: TileSetMask = {
     let mut ownership_group_index = 0;
-    let mut ownable_tile_set_mask = 0;
+    let mut ownable_tiles = 0;
     while ownership_group_index < OwnershipGroup::COUNT {
-        ownable_tile_set_mask |= TILE_SET_MASK_BY_OWNERSHIP_GROUP[ownership_group_index];
+        ownable_tiles |= TILE_SET_MASK_BY_OWNERSHIP_GROUP[ownership_group_index];
         ownership_group_index += 1;
     }
 
-    ownable_tile_set_mask
+    ownable_tiles
 };
 
 const fn derive_rent_by_rent_level(tile_definition_kind: &TileDefinitionKind) -> [Money; RENT_LEVEL_COUNT] {
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_tile_set_masks() {
+    fn derives_tiles() {
         assert_eq!(
             TILE_SET_MASK_BY_OWNERSHIP_GROUP[OwnershipGroup::Brown as usize],
             1 << 1 | 1 << 3
