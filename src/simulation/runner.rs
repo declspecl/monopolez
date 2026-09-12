@@ -80,6 +80,13 @@ mod tests {
     }
 
     #[test]
+    fn finishes_most_games_when_trading_is_permitted() {
+        let summary = run_simulation(&Ruleset::default(), &create_config(50), 4).expect("4 players should be supported");
+
+        assert!(summary.calculate_decisive_game_ratio() > 0.9, "trading bots should finish nearly every game");
+    }
+
+    #[test]
     fn rejects_unsupported_player_counts() {
         assert!(run_simulation(&Ruleset::default(), &create_config(1), 9).is_err());
     }

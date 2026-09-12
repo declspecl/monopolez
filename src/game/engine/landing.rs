@@ -6,6 +6,7 @@ use super::payment::{
     charge_player,
     select_fee_creditor,
 };
+use super::trade::run_trade_phase;
 use crate::game::board::model::PlayerId;
 use crate::game::card::data::{
     NEAREST_RAILROAD_RENT_MULTIPLIER,
@@ -14,6 +15,7 @@ use crate::game::card::data::{
 use crate::game::card::model::DeckKind;
 use crate::game::rng::DiceRoll;
 use crate::game::ruleset::model::{
+    PermittedBarterTimesMask,
     PropertyPurchaseDeclineMode,
     Ruleset,
 };
@@ -85,7 +87,10 @@ fn resolve_ownable_tile_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrat
     rent_modifier: RentModifier,
 ) {
     match game_state.board.get_tile_owner(tile_id) {
-        None => offer_purchase(game_state, ruleset, strategies, player_id, tile_id),
+        None => {
+            run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::BEFORE_PURCHASE);
+            offer_purchase(game_state, ruleset, strategies, player_id, tile_id);
+        },
         Some(owner_player_id) if owner_player_id == player_id || game_state.board.is_tile_mortgaged(tile_id) => {},
         Some(owner_player_id) => {
             let rent = calculate_rent(game_state, tile_id, owner_player_id, dice_roll, rent_modifier);

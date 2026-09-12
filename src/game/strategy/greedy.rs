@@ -15,10 +15,12 @@ use crate::game::tile::lut::{
     HOUSE_PURCHASE_PRICE_BY_TILE_ID,
     PURCHASE_PRICE_BY_TILE_ID,
     TILE_ID_BY_PROPERTY_ID,
+    TILE_SET_MASK_BY_OWNERSHIP_GROUP,
     UNMORTGAGE_PRICE_BY_TILE_ID,
 };
 use crate::game::tile::model::{
     Cash,
+    OwnershipGroup,
     PropertyId,
     TileId,
 };
@@ -126,10 +128,42 @@ impl PlayerStrategy for GreedyStrategy {
 
     fn propose_trade<const PLAYER_COUNT: usize>(
         &mut self,
-        _game_state: &GameState<PLAYER_COUNT>,
+        game_state: &GameState<PLAYER_COUNT>,
         _ruleset: &Ruleset,
-        _player_id: PlayerId,
+        player_id: PlayerId,
     ) -> Option<TradeOffer> {
+        let owned_tiles = game_state.board.owned_tiles_by_player_id[player_id as usize];
+
+        for ownership_group_index in 0..OwnershipGroup::COUNT {
+            let group_tiles = TILE_SET_MASK_BY_OWNERSHIP_GROUP[ownership_group_index];
+            let owned_group_tiles = owned_tiles & group_tiles;
+            let missing_group_tiles = group_tiles & !owned_group_tiles;
+            if owned_group_tiles == 0 || missing_group_tiles.count_ones() != 1 {
+                continue;
+            }
+
+            let missing_tile_id = missing_group_tiles.trailing_zeros() as TileId;
+            let Some(owner_player_id) = game_state.board.get_tile_owner(missing_tile_id) else {
+                continue;
+            };
+
+            let offered_cash = PURCHASE_PRICE_BY_TILE_ID[missing_tile_id as usize] as Cash * 3 / 2;
+            if game_state.cash_by_player_id[player_id as usize] < offered_cash + self.cash_reserve {
+                continue;
+            }
+
+            return Some(TradeOffer {
+                proposer_player_id: player_id,
+                recipient_player_id: owner_player_id,
+                offered_cash,
+                offered_tiles: 0,
+                offered_get_out_of_jail_free_cards: 0,
+                requested_cash: 0,
+                requested_tiles: 1 << missing_tile_id,
+                requested_get_out_of_jail_free_cards: 0,
+            });
+        }
+
         None
     }
 
