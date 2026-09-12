@@ -3,6 +3,7 @@ use super::landing::{
     RentModifier,
     resolve_landing,
 };
+use super::mortgage::run_mortgage_phase;
 use super::movement::{
     move_player_forward,
     release_player_from_jail,
@@ -67,6 +68,7 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 ) {
     let player_id = game_state.current_player_id;
 
+    run_mortgage_phase(game_state, ruleset, strategies, player_id);
     run_improvement_phase(game_state, ruleset, strategies, player_id);
 
     if game_state.jailed_players & (1 << player_id) != 0 {

@@ -45,4 +45,11 @@ pub trait PlayerStrategy {
         ruleset: &Ruleset,
         player_id: PlayerId,
     ) -> Option<PropertyId>;
+
+    fn choose_tile_to_unmortgage<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        ruleset: &Ruleset,
+        player_id: PlayerId,
+    ) -> Option<TileId>;
 }

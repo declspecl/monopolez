@@ -14,6 +14,7 @@ use crate::game::tile::lut::{
     HOUSE_PURCHASE_PRICE_BY_TILE_ID,
     PURCHASE_PRICE_BY_TILE_ID,
     TILE_ID_BY_PROPERTY_ID,
+    UNMORTGAGE_PRICE_BY_TILE_ID,
 };
 use crate::game::tile::model::{
     Cash,
@@ -93,5 +94,31 @@ impl PlayerStrategy for GreedyStrategy {
         }
 
         least_improved_property.map(|(_, property_id)| property_id)
+    }
+
+    fn choose_tile_to_unmortgage<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
+        player_id: PlayerId,
+    ) -> Option<TileId> {
+        let mut mortgaged_owned_tiles = game_state.board.owned_tiles_by_player_id[player_id as usize] & game_state.board.mortgaged_tiles;
+        let mut cheapest_unmortgage: Option<(Cash, TileId)> = None;
+
+        while mortgaged_owned_tiles != 0 {
+            let tile_id = mortgaged_owned_tiles.trailing_zeros() as TileId;
+            mortgaged_owned_tiles &= mortgaged_owned_tiles - 1;
+
+            let unmortgage_price = UNMORTGAGE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
+            if game_state.cash_by_player_id[player_id as usize] < unmortgage_price + self.cash_reserve {
+                continue;
+            }
+
+            if cheapest_unmortgage.is_none_or(|(cheapest_unmortgage_price, _)| unmortgage_price < cheapest_unmortgage_price) {
+                cheapest_unmortgage = Some((unmortgage_price, tile_id));
+            }
+        }
+
+        cheapest_unmortgage.map(|(_, tile_id)| tile_id)
     }
 }

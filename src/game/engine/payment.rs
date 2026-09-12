@@ -1,4 +1,5 @@
 use super::improvement::sell_one_building;
+use super::mortgage::calculate_mortgage_transfer_interest;
 use crate::game::board::model::PlayerId;
 use crate::game::ruleset::model::{
     FreeParkingJackpotMode,
@@ -90,8 +91,11 @@ fn declare_bankruptcy<const PLAYER_COUNT: usize>(
 
     match creditor {
         Creditor::Player(creditor_player_id) => {
+            let transfer_interest = calculate_mortgage_transfer_interest(game_state, owned_tiles);
+
             game_state.board.owned_tiles_by_player_id[creditor_player_id as usize] |= owned_tiles;
             game_state.cash_by_player_id[creditor_player_id as usize] += remaining_cash;
+            game_state.cash_by_player_id[creditor_player_id as usize] = game_state.cash_by_player_id[creditor_player_id as usize].saturating_sub(transfer_interest);
         },
         Creditor::Bank | Creditor::FreeParkingJackpot => {
             game_state.board.mortgaged_tiles &= !owned_tiles;
