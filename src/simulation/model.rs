@@ -1,14 +1,37 @@
+use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::game::board::data::MAX_PLAYER_COUNT;
+use crate::game::strategy::any::AnyStrategy;
+use crate::game::strategy::cautious::CautiousStrategy;
+use crate::game::strategy::greedy::GreedyStrategy;
 use crate::game::tile::model::Cash;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
+pub enum StrategyKind {
+    Greedy,
+    Cautious,
+}
+
+impl StrategyKind {
+    pub const fn create_strategy(
+        self,
+        cash_reserve: Cash,
+    ) -> AnyStrategy {
+        match self {
+            Self::Greedy => AnyStrategy::Greedy(GreedyStrategy { cash_reserve }),
+            Self::Cautious => AnyStrategy::Cautious(CautiousStrategy { cash_reserve }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimulationConfig {
     pub game_count: u32,
     pub max_turn_count: u32,
     pub seed: u64,
     pub cash_reserve: Cash,
+    pub strategy_kinds: Vec<StrategyKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

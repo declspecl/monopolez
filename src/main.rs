@@ -15,6 +15,7 @@ use crate::game::tile::model::{
 use crate::simulation::model::{
     SimulationConfig,
     SimulationSummary,
+    StrategyKind,
 };
 use crate::simulation::runner::run_simulation;
 
@@ -42,6 +43,9 @@ struct CliArguments {
     #[arg(long)]
     free_parking_jackpot: bool,
 
+    #[arg(long, value_delimiter = ',', default_value = "greedy")]
+    strategies: Vec<StrategyKind>,
+
     #[arg(long)]
     json: bool,
 }
@@ -55,6 +59,7 @@ fn main() -> Result<()> {
         max_turn_count: arguments.max_turn_count,
         seed: arguments.seed,
         cash_reserve: arguments.cash_reserve,
+        strategy_kinds: arguments.strategies.clone(),
     };
 
     let summary = run_simulation(&ruleset, &config, arguments.player_count)?;
@@ -62,7 +67,7 @@ fn main() -> Result<()> {
     if arguments.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else {
-        print_summary(&summary);
+        print_summary(&summary, &arguments.strategies);
     }
 
     Ok(())
@@ -81,12 +86,17 @@ fn build_ruleset(arguments: &CliArguments) -> Ruleset {
         .build()
 }
 
-fn print_summary(summary: &SimulationSummary) {
+fn print_summary(
+    summary: &SimulationSummary,
+    strategy_kinds: &[StrategyKind],
+) {
     println!("games           {}", summary.game_count);
     println!("decisive        {:.1}%", summary.calculate_decisive_game_ratio() * 100.0);
     println!("average turns   {:.1}", summary.calculate_average_turn_count());
 
     for (player_id, win_count) in summary.win_count_by_player_id.iter().enumerate() {
-        println!("player {player_id} wins    {win_count}");
+        let strategy_kind = strategy_kinds[player_id % strategy_kinds.len()];
+
+        println!("player {player_id} wins    {win_count} ({strategy_kind:?})");
     }
 }

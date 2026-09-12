@@ -13,13 +13,17 @@ use crate::game::engine::turn::{
 };
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
-use crate::game::strategy::greedy::GreedyStrategy;
+use crate::game::strategy::any::AnyStrategy;
 
 pub fn run_simulation(
     ruleset: &Ruleset,
     config: &SimulationConfig,
     player_count: usize,
 ) -> Result<SimulationSummary> {
+    if config.strategy_kinds.is_empty() {
+        bail!("at least one strategy is required");
+    }
+
     match player_count {
         2 => Ok(simulate_games::<2>(ruleset, config)),
         3 => Ok(simulate_games::<3>(ruleset, config)),
@@ -40,7 +44,7 @@ fn simulate_games<const PLAYER_COUNT: usize>(
 
     for game_index in 0..config.game_count {
         let mut game_state = GameState::<PLAYER_COUNT>::create_starting_state(ruleset, config.seed.wrapping_add(game_index as u64));
-        let mut strategies = [GreedyStrategy { cash_reserve: config.cash_reserve }; PLAYER_COUNT];
+        let mut strategies: [AnyStrategy; PLAYER_COUNT] = core::array::from_fn(|player_index| config.strategy_kinds[player_index % config.strategy_kinds.len()].create_strategy(config.cash_reserve));
 
         let game_summary = play_game(&mut game_state, ruleset, &mut strategies, config.max_turn_count);
 
@@ -59,6 +63,7 @@ fn simulate_games<const PLAYER_COUNT: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::model::StrategyKind;
 
     fn create_config(game_count: u32) -> SimulationConfig {
         SimulationConfig {
@@ -66,6 +71,7 @@ mod tests {
             max_turn_count: 2_000,
             seed: 7,
             cash_reserve: 100,
+            strategy_kinds: vec![StrategyKind::Greedy],
         }
     }
 
@@ -84,6 +90,24 @@ mod tests {
         let summary = run_simulation(&Ruleset::default(), &create_config(50), 4).expect("4 players should be supported");
 
         assert!(summary.calculate_decisive_game_ratio() > 0.9, "trading bots should finish nearly every game");
+    }
+
+    #[test]
+    fn assigns_strategies_in_order_across_players() {
+        let mut config = create_config(20);
+        config.strategy_kinds = vec![StrategyKind::Greedy, StrategyKind::Cautious];
+
+        let summary = run_simulation(&Ruleset::default(), &config, 4).expect("4 players should be supported");
+
+        assert_eq!(summary.game_count, 20);
+    }
+
+    #[test]
+    fn rejects_empty_strategy_lists() {
+        let mut config = create_config(1);
+        config.strategy_kinds.clear();
+
+        assert!(run_simulation(&Ruleset::default(), &config, 4).is_err());
     }
 
     #[test]
