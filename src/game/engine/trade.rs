@@ -1,0 +1,277 @@
+use super::mortgage::{
+    calculate_mortgage_transfer_interest,
+    has_group_improvements,
+};
+use crate::game::board::model::PlayerId;
+use crate::game::card::model::DeckKind;
+use crate::game::ruleset::model::{
+    PermittedBarterTacticsMask,
+    PermittedBarterTimesMask,
+    Ruleset,
+};
+use crate::game::state::model::GameState;
+use crate::game::strategy::model::PlayerStrategy;
+use crate::game::tile::model::{
+    Cash,
+    TileSetMask,
+};
+use crate::game::trade::model::{
+    TradeOffer,
+    deck_kind_bit,
+};
+
+pub fn run_trade_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
+    game_state: &mut GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
+    strategies: &mut [Strategy; PLAYER_COUNT],
+    player_id: PlayerId,
+    barter_time: PermittedBarterTimesMask,
+) -> bool {
+    if !ruleset.permitted_barter_times.contains(barter_time) {
+        return false;
+    }
+
+    let Some(trade_offer) = strategies[player_id as usize].propose_trade(game_state, ruleset, player_id) else {
+        return false;
+    };
+
+    if trade_offer.proposer_player_id != player_id || !is_trade_permitted(game_state, ruleset, &trade_offer) {
+        return false;
+    }
+
+    let recipient_index = trade_offer.recipient_player_id as usize;
+    if !strategies[recipient_index].should_accept_trade(game_state, ruleset, trade_offer.recipient_player_id, &trade_offer) {
+        return false;
+    }
+
+    execute_trade(game_state, &trade_offer);
+
+    true
+}
+
+pub fn is_trade_permitted<const PLAYER_COUNT: usize>(
+    game_state: &GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
+    trade_offer: &TradeOffer,
+) -> bool {
+    let proposer_index = trade_offer.proposer_player_id as usize;
+    let recipient_index = trade_offer.recipient_player_id as usize;
+
+    if proposer_index == recipient_index || proposer_index >= PLAYER_COUNT || recipient_index >= PLAYER_COUNT {
+        return false;
+    }
+
+    let traded_players = 1 << trade_offer.proposer_player_id | 1 << trade_offer.recipient_player_id;
+    if game_state.bankrupt_players & traded_players != 0 {
+        return false;
+    }
+
+    let owns_offered_tiles = game_state.board.owned_tiles_by_player_id[proposer_index] & trade_offer.offered_tiles == trade_offer.offered_tiles;
+    let owns_requested_tiles = game_state.board.owned_tiles_by_player_id[recipient_index] & trade_offer.requested_tiles == trade_offer.requested_tiles;
+    if !owns_offered_tiles || !owns_requested_tiles {
+        return false;
+    }
+
+    if game_state.cash_by_player_id[proposer_index] < trade_offer.offered_cash || game_state.cash_by_player_id[recipient_index] < trade_offer.requested_cash {
+        return false;
+    }
+
+    if !holds_get_out_of_jail_free_cards(game_state, trade_offer.proposer_player_id, trade_offer.offered_get_out_of_jail_free_cards)
+        || !holds_get_out_of_jail_free_cards(game_state, trade_offer.recipient_player_id, trade_offer.requested_get_out_of_jail_free_cards)
+    {
+        return false;
+    }
+
+    let mut traded_tiles = trade_offer.traded_tiles();
+    while traded_tiles != 0 {
+        let tile_id = traded_tiles.trailing_zeros() as u8;
+        traded_tiles &= traded_tiles - 1;
+
+        if has_group_improvements(game_state, tile_id) {
+            return false;
+        }
+    }
+
+    are_tactics_permitted(game_state, ruleset, trade_offer)
+}
+
+pub fn execute_trade<const PLAYER_COUNT: usize>(
+    game_state: &mut GameState<PLAYER_COUNT>,
+    trade_offer: &TradeOffer,
+) {
+    let proposer_index = trade_offer.proposer_player_id as usize;
+    let recipient_index = trade_offer.recipient_player_id as usize;
+
+    let offered_transfer_interest = calculate_mortgage_transfer_interest(game_state, trade_offer.offered_tiles);
+    let requested_transfer_interest = calculate_mortgage_transfer_interest(game_state, trade_offer.requested_tiles);
+
+    game_state.board.owned_tiles_by_player_id[proposer_index] &= !trade_offer.offered_tiles;
+    game_state.board.owned_tiles_by_player_id[proposer_index] |= trade_offer.requested_tiles;
+    game_state.board.owned_tiles_by_player_id[recipient_index] &= !trade_offer.requested_tiles;
+    game_state.board.owned_tiles_by_player_id[recipient_index] |= trade_offer.offered_tiles;
+
+    game_state.cash_by_player_id[proposer_index] += trade_offer.requested_cash;
+    game_state.cash_by_player_id[proposer_index] -= trade_offer.offered_cash;
+    game_state.cash_by_player_id[recipient_index] += trade_offer.offered_cash;
+    game_state.cash_by_player_id[recipient_index] -= trade_offer.requested_cash;
+
+    game_state.cash_by_player_id[proposer_index] = game_state.cash_by_player_id[proposer_index].saturating_sub(requested_transfer_interest);
+    game_state.cash_by_player_id[recipient_index] = game_state.cash_by_player_id[recipient_index].saturating_sub(offered_transfer_interest);
+
+    transfer_get_out_of_jail_free_cards(game_state, trade_offer.offered_get_out_of_jail_free_cards, trade_offer.recipient_player_id);
+    transfer_get_out_of_jail_free_cards(game_state, trade_offer.requested_get_out_of_jail_free_cards, trade_offer.proposer_player_id);
+}
+
+fn are_tactics_permitted<const PLAYER_COUNT: usize>(
+    game_state: &GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
+    trade_offer: &TradeOffer,
+) -> bool {
+    let permitted_tactics = ruleset.permitted_barter_tactics;
+
+    if (trade_offer.offered_cash > 0 || trade_offer.requested_cash > 0) && !permitted_tactics.contains(PermittedBarterTacticsMask::MONEY) {
+        return false;
+    }
+
+    let traded_tiles = trade_offer.traded_tiles();
+    let mortgaged_traded_tiles = traded_tiles & game_state.board.mortgaged_tiles;
+    let unmortgaged_traded_tiles = traded_tiles & !game_state.board.mortgaged_tiles;
+
+    if unmortgaged_traded_tiles != 0 && !permitted_tactics.contains(PermittedBarterTacticsMask::UNMORTGAGED_PROPERTIES) {
+        return false;
+    }
+
+    if mortgaged_traded_tiles != 0 && !permitted_tactics.contains(PermittedBarterTacticsMask::MORTGAGED_PROPERTIES) {
+        return false;
+    }
+
+    trade_offer.traded_get_out_of_jail_free_cards() == 0 || permitted_tactics.contains(PermittedBarterTacticsMask::GET_OUT_OF_JAIL_FREE_CARDS)
+}
+
+fn holds_get_out_of_jail_free_cards<const PLAYER_COUNT: usize>(
+    game_state: &GameState<PLAYER_COUNT>,
+    player_id: PlayerId,
+    traded_cards: u8,
+) -> bool {
+    for deck_kind in [DeckKind::Chance, DeckKind::CommunityChest] {
+        let is_traded = traded_cards & deck_kind_bit(deck_kind) != 0;
+        if is_traded && game_state.get_out_of_jail_free_card_holder_by_deck_kind[deck_kind as usize] != Some(player_id) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn transfer_get_out_of_jail_free_cards<const PLAYER_COUNT: usize>(
+    game_state: &mut GameState<PLAYER_COUNT>,
+    traded_cards: u8,
+    new_holder_player_id: PlayerId,
+) {
+    for deck_kind in [DeckKind::Chance, DeckKind::CommunityChest] {
+        if traded_cards & deck_kind_bit(deck_kind) != 0 {
+            game_state.get_out_of_jail_free_card_holder_by_deck_kind[deck_kind as usize] = Some(new_holder_player_id);
+        }
+    }
+}
+
+pub fn calculate_tile_set_purchase_value(tiles: TileSetMask) -> Cash {
+    use crate::game::tile::lut::PURCHASE_PRICE_BY_TILE_ID;
+
+    let mut remaining_tiles = tiles;
+    let mut purchase_value = 0;
+
+    while remaining_tiles != 0 {
+        let tile_index = remaining_tiles.trailing_zeros() as usize;
+        remaining_tiles &= remaining_tiles - 1;
+
+        purchase_value += PURCHASE_PRICE_BY_TILE_ID[tile_index] as Cash;
+    }
+
+    purchase_value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PARK_PLACE_TILE_ID: u8 = 37;
+    const BOARDWALK_TILE_ID: u8 = 39;
+    const MEDITERRANEAN_AVENUE_TILE_ID: u8 = 1;
+
+    fn create_trade_state(ruleset: &Ruleset) -> GameState<2> {
+        let mut game_state = GameState::<2>::create_starting_state(ruleset, 1);
+        game_state.board.owned_tiles_by_player_id[0] = 1 << PARK_PLACE_TILE_ID;
+        game_state.board.owned_tiles_by_player_id[1] = 1 << BOARDWALK_TILE_ID;
+
+        game_state
+    }
+
+    fn create_trade_offer() -> TradeOffer {
+        TradeOffer {
+            proposer_player_id: 0,
+            recipient_player_id: 1,
+            offered_cash: 100,
+            offered_tiles: 1 << PARK_PLACE_TILE_ID,
+            offered_get_out_of_jail_free_cards: 0,
+            requested_cash: 0,
+            requested_tiles: 1 << BOARDWALK_TILE_ID,
+            requested_get_out_of_jail_free_cards: 0,
+        }
+    }
+
+    #[test]
+    fn executes_a_permitted_trade() {
+        let ruleset = Ruleset::default();
+        let mut game_state = create_trade_state(&ruleset);
+        let trade_offer = create_trade_offer();
+
+        assert!(is_trade_permitted(&game_state, &ruleset, &trade_offer));
+        execute_trade(&mut game_state, &trade_offer);
+
+        assert_eq!(game_state.board.owned_tiles_by_player_id[0], 1 << BOARDWALK_TILE_ID);
+        assert_eq!(game_state.board.owned_tiles_by_player_id[1], 1 << PARK_PLACE_TILE_ID);
+        assert_eq!(game_state.cash_by_player_id[0], 1400);
+        assert_eq!(game_state.cash_by_player_id[1], 1600);
+    }
+
+    #[test]
+    fn refuses_trade_of_tiles_the_players_do_not_own() {
+        let ruleset = Ruleset::default();
+        let game_state = create_trade_state(&ruleset);
+        let mut trade_offer = create_trade_offer();
+        trade_offer.offered_tiles = 1 << MEDITERRANEAN_AVENUE_TILE_ID;
+
+        assert!(!is_trade_permitted(&game_state, &ruleset, &trade_offer));
+    }
+
+    #[test]
+    fn refuses_trade_of_improved_ownership_group() {
+        let ruleset = Ruleset::default();
+        let mut game_state = create_trade_state(&ruleset);
+        game_state.board.improvement_level_by_property_id[20] = 1;
+
+        assert!(!is_trade_permitted(&game_state, &ruleset, &create_trade_offer()));
+    }
+
+    #[test]
+    fn refuses_tactics_the_ruleset_forbids() {
+        let ruleset = Ruleset::builder().with_permitted_barter_tactics(PermittedBarterTacticsMask::MONEY).build();
+        let game_state = create_trade_state(&ruleset);
+
+        assert!(!is_trade_permitted(&game_state, &ruleset, &create_trade_offer()));
+    }
+
+    #[test]
+    fn charges_interest_on_traded_mortgages() {
+        let ruleset = Ruleset::default();
+        let mut game_state = create_trade_state(&ruleset);
+        game_state.board.mortgaged_tiles = 1 << PARK_PLACE_TILE_ID;
+
+        let mut trade_offer = create_trade_offer();
+        trade_offer.offered_cash = 0;
+        execute_trade(&mut game_state, &trade_offer);
+
+        assert_eq!(game_state.cash_by_player_id[1], 1500 - 18);
+    }
+}

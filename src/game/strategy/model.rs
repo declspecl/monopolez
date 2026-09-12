@@ -6,6 +6,7 @@ use crate::game::tile::model::{
     PropertyId,
     TileId,
 };
+use crate::game::trade::model::TradeOffer;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,4 +53,19 @@ pub trait PlayerStrategy {
         ruleset: &Ruleset,
         player_id: PlayerId,
     ) -> Option<TileId>;
+
+    fn propose_trade<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        ruleset: &Ruleset,
+        player_id: PlayerId,
+    ) -> Option<TradeOffer>;
+
+    fn should_accept_trade<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        ruleset: &Ruleset,
+        player_id: PlayerId,
+        trade_offer: &TradeOffer,
+    ) -> bool;
 }

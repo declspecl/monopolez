@@ -99,7 +99,7 @@ pub fn calculate_mortgage_transfer_interest<const PLAYER_COUNT: usize>(
     transfer_interest
 }
 
-fn has_group_improvements<const PLAYER_COUNT: usize>(
+pub fn has_group_improvements<const PLAYER_COUNT: usize>(
     game_state: &GameState<PLAYER_COUNT>,
     tile_id: TileId,
 ) -> bool {

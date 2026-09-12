@@ -6,3 +6,4 @@ pub mod ruleset;
 pub mod state;
 pub mod strategy;
 pub mod tile;
+pub mod trade;

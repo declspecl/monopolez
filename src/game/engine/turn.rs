@@ -13,9 +13,13 @@ use super::payment::{
     charge_player,
     select_fee_creditor,
 };
+use super::trade::run_trade_phase;
 use crate::game::board::model::PlayerId;
 use crate::game::rng::DiceRoll;
-use crate::game::ruleset::model::Ruleset;
+use crate::game::ruleset::model::{
+    PermittedBarterTimesMask,
+    Ruleset,
+};
 use crate::game::state::model::{
     GameState,
     PlayerSetMask,
@@ -68,6 +72,7 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 ) {
     let player_id = game_state.current_player_id;
 
+    run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
     run_mortgage_phase(game_state, ruleset, strategies, player_id);
     run_improvement_phase(game_state, ruleset, strategies, player_id);
 

@@ -5,4 +5,5 @@ pub mod landing;
 pub mod mortgage;
 pub mod movement;
 pub mod payment;
+pub mod trade;
 pub mod turn;

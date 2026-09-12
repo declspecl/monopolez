@@ -7,6 +7,7 @@ use crate::game::board::model::{
     PropertyImprovementLevel,
 };
 use crate::game::engine::improvement::can_improve_property;
+use crate::game::engine::trade::calculate_tile_set_purchase_value;
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
 use crate::game::tile::data::PROPERTY_COUNT;
@@ -21,6 +22,7 @@ use crate::game::tile::model::{
     PropertyId,
     TileId,
 };
+use crate::game::trade::model::TradeOffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GreedyStrategy {
@@ -120,5 +122,27 @@ impl PlayerStrategy for GreedyStrategy {
         }
 
         cheapest_unmortgage.map(|(_, tile_id)| tile_id)
+    }
+
+    fn propose_trade<const PLAYER_COUNT: usize>(
+        &mut self,
+        _game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
+        _player_id: PlayerId,
+    ) -> Option<TradeOffer> {
+        None
+    }
+
+    fn should_accept_trade<const PLAYER_COUNT: usize>(
+        &mut self,
+        _game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
+        _player_id: PlayerId,
+        trade_offer: &TradeOffer,
+    ) -> bool {
+        let received_value = trade_offer.offered_cash + calculate_tile_set_purchase_value(trade_offer.offered_tiles);
+        let given_value = trade_offer.requested_cash + calculate_tile_set_purchase_value(trade_offer.requested_tiles);
+
+        received_value > given_value
     }
 }
