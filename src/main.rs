@@ -1,7 +1,13 @@
 mod game;
 mod simulation;
 
-use anyhow::Result;
+use std::fs;
+use std::path::PathBuf;
+
+use anyhow::{
+    Context,
+    Result,
+};
 use clap::Parser;
 
 use crate::game::ruleset::model::{
@@ -47,13 +53,19 @@ struct CliArguments {
     strategies: Vec<StrategyKind>,
 
     #[arg(long)]
+    ruleset_file: Option<PathBuf>,
+
+    #[arg(long)]
+    print_ruleset: bool,
+
+    #[arg(long)]
     json: bool,
 }
 
 fn main() -> Result<()> {
     let arguments = CliArguments::parse();
 
-    let ruleset = build_ruleset(&arguments);
+    let ruleset = load_ruleset(&arguments)?;
     let config = SimulationConfig {
         game_count: arguments.game_count,
         max_turn_count: arguments.max_turn_count,
@@ -61,6 +73,12 @@ fn main() -> Result<()> {
         cash_reserve: arguments.cash_reserve,
         strategy_kinds: arguments.strategies.clone(),
     };
+
+    if arguments.print_ruleset {
+        println!("{}", serde_json::to_string_pretty(&ruleset)?);
+
+        return Ok(());
+    }
 
     let summary = run_simulation(&ruleset, &config, arguments.player_count)?;
 
@@ -71,6 +89,16 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_ruleset(arguments: &CliArguments) -> Result<Ruleset> {
+    let Some(ruleset_file) = &arguments.ruleset_file else {
+        return Ok(build_ruleset(arguments));
+    };
+
+    let ruleset_json = fs::read_to_string(ruleset_file).with_context(|| format!("failed to read ruleset file {}", ruleset_file.display()))?;
+
+    serde_json::from_str(&ruleset_json).with_context(|| format!("failed to parse ruleset file {}", ruleset_file.display()))
 }
 
 fn build_ruleset(arguments: &CliArguments) -> Ruleset {

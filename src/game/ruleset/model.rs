@@ -1,4 +1,8 @@
 use bitflags::bitflags;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use super::data::{
     OFFICIAL_AUCTION_ELIGIBILITY,
@@ -35,7 +39,7 @@ bitflags! {
     /// - F: IOUs / loans
     /// - G: revenue sharing
     #[repr(transparent)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct PermittedBarterTacticsMask: u8 {
         const MONEY = 1 << 0;
         const UNMORTGAGED_PROPERTIES = 1 << 1;
@@ -58,7 +62,7 @@ bitflags! {
     /// - B: before purchase
     /// - C: during payment
     #[repr(transparent)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct PermittedBarterTimesMask: u8 {
         const START_OF_TURN = 1 << 0;
         const BEFORE_PURCHASE = 1 << 1;
@@ -66,7 +70,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Ruleset {
     pub starting_player_money: Money,
     pub go_passing_salary: Money,
@@ -93,7 +97,7 @@ impl Default for Ruleset {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RulesetBuilder {
     ruleset: Ruleset,
 }
@@ -217,28 +221,28 @@ impl Default for RulesetBuilder {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PropertyPurchaseDeclineMode {
     Auction,
     RemainsUnowned,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuctionEligibility {
     AllPlayers,
     ExcludingDecliningPlayer,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PropertyImprovementDistribution {
     Even,
     Arbitrary,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FreeParkingJackpotMode {
     Disabled,
     TaxesAndFees,
@@ -275,6 +279,19 @@ mod tests {
         assert_eq!(ruleset.starting_player_money, 2000);
         assert_eq!(ruleset.property_purchase_decline_mode, PropertyPurchaseDeclineMode::RemainsUnowned);
         assert_eq!(ruleset.permitted_barter_times, Ruleset::default().permitted_barter_times);
+    }
+
+    #[test]
+    fn round_trips_through_json() {
+        let ruleset = Ruleset::builder()
+            .with_go_landing_salary(400)
+            .with_free_parking_jackpot_mode(FreeParkingJackpotMode::TaxesAndFees)
+            .build();
+
+        let serialized_ruleset = serde_json::to_string(&ruleset).expect("ruleset should serialize");
+        let deserialized_ruleset: Ruleset = serde_json::from_str(&serialized_ruleset).expect("ruleset should deserialize");
+
+        assert_eq!(ruleset, deserialized_ruleset);
     }
 
     #[test]
