@@ -108,13 +108,26 @@ pub struct TuningReport {
     pub steps: Vec<TuningStep>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TuningSession {
+    pub reports: Vec<TuningReport>,
+    pub opponent_pool: Vec<ConfigurableStrategy>,
+}
+
+impl TuningSession {
+    pub fn champion(&self) -> ConfigurableStrategy {
+        self.reports.last().map(|report| report.best_strategy).unwrap_or_default()
+    }
+}
+
 pub fn tune_strategy_over_generations(
     ruleset: &Ruleset,
     config: &TournamentConfig,
     round_count: u32,
     generation_count: u32,
-) -> Result<Vec<TuningReport>> {
-    let mut opponent_pool = vec![ConfigurableStrategy::new()];
+    starting_pool: &[ConfigurableStrategy],
+) -> Result<TuningSession> {
+    let mut opponent_pool = starting_pool.to_vec();
     let mut reports = Vec::new();
 
     for _generation in 0..generation_count {
@@ -123,7 +136,38 @@ pub fn tune_strategy_over_generations(
         reports.push(report);
     }
 
-    Ok(reports)
+    Ok(TuningSession { reports, opponent_pool })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct LeagueEntry {
+    pub strategy: ConfigurableStrategy,
+    pub win_rate: f64,
+    pub decisive_game_ratio: f64,
+    pub average_turn_count: f64,
+}
+
+pub fn run_league(
+    ruleset: &Ruleset,
+    strategies: &[ConfigurableStrategy],
+    config: &TournamentConfig,
+) -> Result<Vec<LeagueEntry>> {
+    let mut entries = Vec::new();
+
+    for candidate_strategy in strategies {
+        let tournament_result = run_pool_tournament(ruleset, *candidate_strategy, strategies, config)?;
+
+        entries.push(LeagueEntry {
+            strategy: *candidate_strategy,
+            win_rate: tournament_result.calculate_candidate_win_rate(),
+            decisive_game_ratio: tournament_result.calculate_decisive_game_ratio(),
+            average_turn_count: tournament_result.calculate_average_turn_count(),
+        });
+    }
+
+    entries.sort_by(|left, right| right.win_rate.total_cmp(&left.win_rate));
+
+    Ok(entries)
 }
 
 pub fn sweep_parameters(
@@ -210,4 +254,31 @@ pub fn tune_strategy(
         evaluated_game_count,
         steps,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::ruleset::data::DEX_RULESET;
+    use crate::game::strategy::data::{
+        BASELINE_STRATEGY,
+        DEX_OPTIMAL_STRATEGY,
+        NEVER_TRADING_STRATEGY,
+    };
+
+    #[test]
+    fn tuned_strategy_tops_a_mixed_field_and_refusing_to_trade_loses() {
+        let config = TournamentConfig {
+            game_count: 6_000,
+            max_turn_count: 3_000,
+            seed: 5,
+            player_count: 4,
+        };
+
+        let league = [BASELINE_STRATEGY, DEX_OPTIMAL_STRATEGY, NEVER_TRADING_STRATEGY];
+        let entries = run_league(&DEX_RULESET, &league, &config).expect("4 players should be supported");
+
+        assert_eq!(entries[0].strategy, DEX_OPTIMAL_STRATEGY, "the tuned strategy should top a mixed field");
+        assert_eq!(entries[2].strategy, NEVER_TRADING_STRATEGY, "refusing to trade should finish last");
+    }
 }

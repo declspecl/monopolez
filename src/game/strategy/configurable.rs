@@ -1,4 +1,7 @@
-use serde::Serialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use super::model::{
     JailAction,
@@ -27,7 +30,7 @@ use crate::game::trade::model::TradeOffer;
 
 const PERCENT_DIVISOR: Cash = 100;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConfigurableStrategy {
     pub cash_reserve: Cash,
     pub purchase_cash_percent: Cash,
