@@ -4,5 +4,5 @@ brace_style = "SameLineWhere"
 max_width = 200
 fn_params_layout = "Vertical"
 fn_call_width = 120
-control_brace_style = "ClosingNextLine"
+control_brace_style = "AlwaysSameLine"
 imports_layout = "Vertical"
