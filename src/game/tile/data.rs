@@ -15,6 +15,12 @@ pub const JAIL_TILE_ID: TileId = 10;
 pub const FREE_PARKING_TILE_ID: TileId = 20;
 pub const GO_TO_JAIL_TILE_ID: TileId = 30;
 
+// chance cards can send players here, explicitly naming these tiles
+pub const READING_RAILROAD_TILE_ID: TileId = 5;
+pub const ST_CHARLES_PLACE_TILE_ID: TileId = 11;
+pub const ILLINOIS_AVENUE_TILE_ID: TileId = 24;
+pub const BOARDWALK_TILE_ID: TileId = 39;
+
 pub const RAILROAD_TILE_PURCHASE_PRICE: Money = 200;
 pub const RAILROAD_RENT_BY_POSSESSION_COUNT: [Money; 4] = [25, 50, 100, 200];
 
