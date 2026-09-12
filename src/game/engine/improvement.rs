@@ -107,13 +107,19 @@ pub fn improve_property<const PLAYER_COUNT: usize>(
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildingSale {
+    pub property_id: PropertyId,
+    pub previous_level: u8,
+    pub level: u8,
+    pub proceeds: Cash,
+}
+
 pub fn sell_one_building<const PLAYER_COUNT: usize>(
     game_state: &mut GameState<PLAYER_COUNT>,
     player_id: PlayerId,
-) -> Cash {
-    let Some(property_id) = find_most_improved_property(game_state, player_id) else {
-        return 0;
-    };
+) -> Option<BuildingSale> {
+    let property_id = find_most_improved_property(game_state, player_id)?;
 
     let property_index = property_id as usize;
     let tile_id = TILE_ID_BY_PROPERTY_ID[property_index];
@@ -125,7 +131,12 @@ pub fn sell_one_building<const PLAYER_COUNT: usize>(
         game_state.board.bank_house_count += 1;
         game_state.cash_by_player_id[player_id as usize] += building_sale_price;
 
-        return building_sale_price;
+        return Some(BuildingSale {
+            property_id,
+            previous_level: improvement_level,
+            level: improvement_level - 1,
+            proceeds: building_sale_price,
+        });
     }
 
     game_state.board.bank_hotel_count += 1;
@@ -135,14 +146,24 @@ pub fn sell_one_building<const PLAYER_COUNT: usize>(
         game_state.board.improvement_level_by_property_id[property_index] = MAX_HOUSE_IMPROVEMENT_LEVEL;
         game_state.cash_by_player_id[player_id as usize] += building_sale_price;
 
-        return building_sale_price;
+        return Some(BuildingSale {
+            property_id,
+            previous_level: improvement_level,
+            level: MAX_HOUSE_IMPROVEMENT_LEVEL,
+            proceeds: building_sale_price,
+        });
     }
 
     let hotel_sale_price = building_sale_price * HOTEL_IMPROVEMENT_LEVEL as Cash;
     game_state.board.improvement_level_by_property_id[property_index] = 0;
     game_state.cash_by_player_id[player_id as usize] += hotel_sale_price;
 
-    hotel_sale_price
+    Some(BuildingSale {
+        property_id,
+        previous_level: improvement_level,
+        level: 0,
+        proceeds: hotel_sale_price,
+    })
 }
 
 fn find_most_improved_property<const PLAYER_COUNT: usize>(
@@ -260,8 +281,28 @@ mod tests {
 
         let sale_price = sell_one_building(&mut game_state, 0);
 
-        assert_eq!(sale_price, 100);
+        assert_eq!(sale_price.unwrap().proceeds, 100);
         assert_eq!(game_state.board.improvement_level_by_property_id[PARK_PLACE_PROPERTY_ID as usize], 1);
         assert_eq!(game_state.board.bank_house_count, BANK_STARTING_HOUSE_COUNT - 2);
+    }
+
+    #[test]
+    fn hotel_sale_reports_downgrade_or_complete_liquidation() {
+        for (houses_available, expected_level, expected_proceeds) in [(4, 4, 100), (0, 0, 500)] {
+            let mut state = create_dark_blue_owner_state(&Ruleset::default());
+            state.board.improvement_level_by_property_id[PARK_PLACE_PROPERTY_ID as usize] = HOTEL_IMPROVEMENT_LEVEL;
+            state.board.bank_hotel_count -= 1;
+            state.board.bank_house_count = houses_available;
+            let cash_before = state.cash_by_player_id[0];
+            let sale = sell_one_building(&mut state, 0).unwrap();
+            assert_eq!(sale.property_id, PARK_PLACE_PROPERTY_ID);
+            assert_eq!(sale.previous_level, HOTEL_IMPROVEMENT_LEVEL);
+            assert_eq!(sale.level, expected_level);
+            assert_eq!(sale.proceeds, expected_proceeds);
+            assert_eq!(state.cash_by_player_id[0], cash_before + expected_proceeds);
+            assert_eq!(state.board.improvement_level_by_property_id[PARK_PLACE_PROPERTY_ID as usize], expected_level);
+            assert_eq!(state.board.bank_hotel_count, BANK_STARTING_HOTEL_COUNT);
+            assert_eq!(state.board.bank_house_count, 0);
+        }
     }
 }

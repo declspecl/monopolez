@@ -51,7 +51,7 @@ pub fn charge_player<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     }
 
     if game_state.cash_by_player_id[debtor_index] < amount {
-        raise_cash(game_state, debtor_player_id, amount);
+        raise_cash(game_state, &mut strategies[debtor_index], debtor_player_id, amount);
     }
 
     if game_state.cash_by_player_id[debtor_index] >= amount {
@@ -79,17 +79,25 @@ fn credit_creditor<const PLAYER_COUNT: usize>(
     }
 }
 
-fn raise_cash<const PLAYER_COUNT: usize>(
+fn raise_cash<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     game_state: &mut GameState<PLAYER_COUNT>,
+    strategy: &mut Strategy,
     player_id: PlayerId,
     required_amount: Cash,
 ) {
     let player_index = player_id as usize;
 
     while game_state.cash_by_player_id[player_index] < required_amount {
-        if sell_one_building(game_state, player_id) == 0 {
+        let Some(sale) = sell_one_building(game_state, player_id) else {
             break;
-        }
+        };
+        strategy.record_event(super::event::GameEvent::BuildingSold {
+            player_id,
+            property_id: sale.property_id,
+            previous_level: sale.previous_level,
+            level: sale.level,
+            proceeds: sale.proceeds,
+        });
     }
 
     let mut unmortgaged_owned_tiles = game_state.board.owned_tiles_by_player_id[player_index] & !game_state.board.mortgaged_tiles;
@@ -99,6 +107,11 @@ fn raise_cash<const PLAYER_COUNT: usize>(
 
         game_state.board.mortgaged_tiles |= 1 << tile_id;
         game_state.cash_by_player_id[player_index] += MORTGAGE_VALUE_BY_TILE_ID[tile_id as usize] as Cash;
+        strategy.record_event(super::event::GameEvent::TileMortgaged {
+            player_id,
+            tile_id: tile_id as TileId,
+            proceeds: MORTGAGE_VALUE_BY_TILE_ID[tile_id as usize] as Cash,
+        });
     }
 }
 

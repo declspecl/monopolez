@@ -71,7 +71,7 @@ struct DecisionTape {
     events: Vec<EventRecord>,
     event_cursor: usize,
     turn: u32,
-    verify_events: bool,
+    event_version: u32,
 }
 
 struct RecordedStrategy {
@@ -120,6 +120,9 @@ impl PlayerStrategy for RecordedStrategy {
         event: GameEvent,
     ) {
         let mut tape = self.tape.borrow_mut();
+        if tape.replay && event.trace_version() > tape.event_version {
+            return;
+        }
         if tape.error.is_some() {
             return;
         }
@@ -132,7 +135,7 @@ impl PlayerStrategy for RecordedStrategy {
             event,
         };
         if tape.replay {
-            if tape.verify_events {
+            if tape.event_version >= 2 {
                 let index = tape.event_cursor;
                 if tape.events.get(index) != Some(&record) {
                     tape.error = Some(format!("event {index} differs from the recording"));
@@ -194,7 +197,7 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 2,
+        schema_version: 3,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
@@ -218,8 +221,8 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if !(1..=2).contains(&trace.schema_version) || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1 or 2 and a positive turn limit");
+    if !(1..=3).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1, 2, or 3 and a positive turn limit");
     }
     if trace.schema_version == 1 && !trace.events.is_empty() {
         bail!("schema version 1 does not support event verification");
@@ -244,7 +247,7 @@ fn run<const N: usize>(
         replay,
         decisions: if replay { trace.decisions.clone() } else { Vec::new() },
         events: if replay { trace.events.clone() } else { Vec::new() },
-        verify_events: trace.schema_version == 2,
+        event_version: trace.schema_version,
         ..DecisionTape::default()
     }));
     let mut strategies: [RecordedStrategy; N] = core::array::from_fn(|index| RecordedStrategy {
@@ -270,7 +273,7 @@ fn run<const N: usize>(
         if tape.borrow().cursor != trace.decisions.len() {
             bail!("replay left unused decisions");
         }
-        if trace.schema_version == 2 && tape.borrow().event_cursor != trace.events.len() {
+        if trace.schema_version >= 2 && tape.borrow().event_cursor != trace.events.len() {
             bail!("replay left unused events");
         }
         if turn_states != trace.turn_states || winner != trace.winner {
@@ -371,6 +374,64 @@ mod tests {
         legacy.schema_version = 1;
         legacy.events.clear();
         replay_game(&legacy).unwrap();
+    }
+
+    #[test]
+    fn liquidation_events_record_sale_and_mortgage_before_payment() {
+        use crate::game::engine::payment::{
+            Creditor,
+            charge_player,
+        };
+        let tape = Rc::new(RefCell::new(DecisionTape::default()));
+        let mut strategies: [RecordedStrategy; 2] = core::array::from_fn(|_| RecordedStrategy {
+            strategy: BASELINE_STRATEGY,
+            tape: tape.clone(),
+        });
+        let mut state = GameState::<2>::create_starting_state(&DEX_RULESET, 0);
+        state.cash_by_player_id[0] = 0;
+        state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
+        state.board.improvement_level_by_property_id[0] = 1;
+        state.board.bank_house_count -= 1;
+        charge_player(&mut state, &DEX_RULESET, &mut strategies, 0, 50, Creditor::Bank);
+        let events: Vec<_> = tape.borrow().events.iter().map(|record| record.event).collect();
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::PaymentDue {
+                    player_id: 0,
+                    creditor: Creditor::Bank,
+                    amount: 50
+                },
+                GameEvent::BuildingSold {
+                    player_id: 0,
+                    property_id: 0,
+                    previous_level: 1,
+                    level: 0,
+                    proceeds: 25
+                },
+                GameEvent::TileMortgaged {
+                    player_id: 0,
+                    tile_id: 1,
+                    proceeds: 30
+                },
+                GameEvent::PaymentCompleted {
+                    player_id: 0,
+                    creditor: Creditor::Bank,
+                    amount: 50
+                }
+            ]
+        );
+        assert_eq!(state.cash_by_player_id[0], 5);
+    }
+
+    #[test]
+    fn older_event_traces_skip_new_liquidation_events() {
+        let mut trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 3, 1000).unwrap();
+        assert!(trace.events.iter().any(|record| record.event.trace_version() == 3));
+        replay_game(&trace).unwrap();
+        trace.schema_version = 2;
+        trace.events.retain(|record| record.event.trace_version() <= 2);
+        replay_game(&trace).unwrap();
     }
 
     #[test]
