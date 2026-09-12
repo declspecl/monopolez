@@ -30,6 +30,7 @@ use crate::simulation::model::{
     SimulationSummary,
     StrategyKind,
 };
+use crate::simulation::provenance::BuildProvenance;
 use crate::simulation::runner::run_simulation;
 use crate::simulation::tournament::{
     TournamentConfig,
@@ -140,6 +141,7 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": 1,
+                    "build": BuildProvenance::current(),
                     "ruleset": ruleset,
                     "config": tournament_config,
                     "strategy": strategy,
@@ -177,7 +179,8 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": 1, "ruleset": ruleset, "config": tournament_config,
-                    "candidate": candidate, "opponent_pool": opponent_pool, "result": result
+                    "candidate": candidate, "opponent_pool": opponent_pool, "result": result,
+                    "build": BuildProvenance::current()
                 }))?
             );
         } else {
@@ -209,7 +212,8 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": 1, "ruleset": ruleset, "config": tournament_config,
-                    "opponent_pool": strategies, "entries": entries
+                    "opponent_pool": strategies, "entries": entries,
+                    "build": BuildProvenance::current()
                 }))?
             );
 
@@ -278,7 +282,8 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": 1, "ruleset": ruleset, "candidate": candidate,
-                    "baseline": baseline, "entries": entries
+                    "baseline": baseline, "entries": entries,
+                    "build": BuildProvenance::current()
                 }))?
             );
         }
@@ -311,6 +316,7 @@ fn main() -> Result<()> {
         if arguments.json {
             let mut output = serde_json::to_value(&session)?;
             output["sweep"] = serde_json::to_value(&sweep)?;
+            output["build"] = serde_json::to_value(BuildProvenance::current())?;
             println!("{}", serde_json::to_string_pretty(&output)?);
             return Ok(());
         } else {
@@ -356,7 +362,8 @@ fn main() -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "schema_version": 1, "ruleset": ruleset, "config": config,
-                "player_count": arguments.player_count, "summary": summary
+                "player_count": arguments.player_count, "summary": summary,
+                "build": BuildProvenance::current()
             }))?
         );
     } else {

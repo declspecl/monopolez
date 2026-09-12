@@ -3,7 +3,11 @@ use std::process::Command;
 fn run_json(arguments: &[&str]) -> serde_json::Value {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(arguments).output().expect("CLI should launch");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    serde_json::from_slice(&output.stdout).expect("stdout must contain exactly one JSON document")
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("stdout must contain exactly one JSON document");
+    assert_eq!(report["build"]["package_version"], env!("CARGO_PKG_VERSION"));
+    assert!(report["build"]["rustc"].as_str().unwrap().starts_with("rustc "));
+    assert!(!report["build"]["target"].as_str().unwrap().is_empty());
+    report
 }
 
 #[test]
