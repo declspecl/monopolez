@@ -80,3 +80,28 @@ fn head_to_head_json_records_each_player_count() {
         assert_eq!(entry["result"]["game_count"], 4);
     }
 }
+
+#[test]
+fn trace_round_trips_through_replay_cli() {
+    let trace = run_json(&["--trace", "--ruleset-name", "dex", "--seed", "7", "--max-turn-count", "20"]);
+    assert_eq!(trace["turn_states"].as_array().unwrap().len(), 21);
+    assert!(!trace["decisions"].as_array().unwrap().is_empty());
+    let path = std::env::temp_dir().join(format!("monopolez-trace-{}.json", std::process::id()));
+    let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+    serde_json::to_writer(file, &trace).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_monopolez"))
+        .args(["--replay-file", path.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let replay: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replay["verified"], true);
+    assert_eq!(replay["turn_count"], 20);
+}
+
+#[test]
+fn trace_rejects_batch_options() {
+    let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
+    assert!(!output.status.success());
+}

@@ -112,12 +112,51 @@ struct CliArguments {
 
     #[arg(long)]
     json: bool,
+
+    #[arg(long, conflicts_with_all = ["replay_file", "analyze", "tune", "head_to_head", "vs_pool", "print_ruleset", "strategies", "game_count", "cash_reserve", "sweep", "tune_pool_file"])]
+    trace: bool,
+
+    #[arg(long, conflicts_with_all = ["analyze", "tune", "head_to_head", "vs_pool", "print_ruleset", "strategy_file", "league_file", "ruleset_file", "ruleset_name", "seed", "player_count", "max_turn_count", "game_count", "strategies", "go_landing_salary", "free_parking_jackpot", "cash_reserve"])]
+    replay_file: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let arguments = CliArguments::parse();
 
+    if let Some(path) = &arguments.replay_file {
+        let input = fs::read_to_string(path).with_context(|| format!("failed to read trace {}", path.display()))?;
+        let trace: crate::simulation::trace::GameTrace = serde_json::from_str(&input).context("failed to parse trace")?;
+        crate::simulation::trace::replay_game(&trace)?;
+        if arguments.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1, "build": BuildProvenance::current(),
+                    "verified": true, "turn_count": trace.turn_states.len() - 1,
+                    "decision_count": trace.decisions.len(), "winner": trace.winner
+                }))?
+            );
+        } else {
+            println!("verified {} turns and {} decisions", trace.turn_states.len() - 1, trace.decisions.len());
+        }
+        return Ok(());
+    }
+
     let ruleset = load_ruleset(&arguments)?;
+    if arguments.trace {
+        let strategies = if arguments.league_file.is_some() {
+            anyhow::ensure!(arguments.strategy_file.is_none(), "trace accepts either a strategy file or a league file");
+            let strategies = load_strategy_pool(&arguments)?;
+            anyhow::ensure!(strategies.len() == arguments.player_count, "trace league must contain exactly player-count strategies in seat order");
+            strategies
+        } else {
+            anyhow::ensure!((2..=8).contains(&arguments.player_count), "trace requires 2 to 8 players");
+            vec![load_candidate_strategy(&arguments)?; arguments.player_count]
+        };
+        let trace = crate::simulation::trace::record_game(ruleset, strategies, arguments.seed, arguments.max_turn_count)?;
+        println!("{}", serde_json::to_string_pretty(&trace)?);
+        return Ok(());
+    }
     let config = SimulationConfig {
         game_count: arguments.game_count,
         max_turn_count: arguments.max_turn_count,

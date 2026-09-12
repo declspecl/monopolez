@@ -1,0 +1,291 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use anyhow::{
+    Result,
+    bail,
+};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use serde_json::{
+    Value,
+    json,
+};
+
+use super::provenance::BuildProvenance;
+use crate::game::board::model::PlayerId;
+use crate::game::engine::turn::play_turn;
+use crate::game::ruleset::model::Ruleset;
+use crate::game::state::model::GameState;
+use crate::game::strategy::configurable::ConfigurableStrategy;
+use crate::game::strategy::model::{
+    JailAction,
+    PlayerStrategy,
+};
+use crate::game::tile::model::{
+    Cash,
+    PropertyId,
+    TileId,
+};
+use crate::game::trade::model::TradeOffer;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Decision {
+    pub player_id: PlayerId,
+    pub request: Value,
+    pub state: Value,
+    pub response: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GameTrace {
+    pub schema_version: u32,
+    pub build: Value,
+    pub ruleset: Ruleset,
+    pub strategies: Vec<ConfigurableStrategy>,
+    pub seed: u64,
+    pub max_turn_count: u32,
+    pub decisions: Vec<Decision>,
+    pub turn_states: Vec<Value>,
+    pub winner: Option<PlayerId>,
+}
+
+#[derive(Default)]
+struct DecisionTape {
+    decisions: Vec<Decision>,
+    replay: bool,
+    cursor: usize,
+    error: Option<String>,
+}
+
+struct RecordedStrategy {
+    strategy: ConfigurableStrategy,
+    tape: Rc<RefCell<DecisionTape>>,
+}
+
+macro_rules! record_decision {
+    ($method:ident, $response:ty, $fallback:expr $(, $argument:ident: $argument_type:ty)*) => {
+        fn $method<const PLAYER_COUNT: usize>(
+            &mut self,
+            game_state: &GameState<PLAYER_COUNT>,
+            ruleset: &Ruleset,
+            player_id: PlayerId,
+            $($argument: $argument_type),*
+        ) -> $response {
+            let request = json!({"method": stringify!($method), $(stringify!($argument): $argument),*});
+            let state = snapshot(game_state);
+            let mut tape = self.tape.borrow_mut();
+            if tape.error.is_some() {
+                return $fallback;
+            }
+            if tape.replay {
+                let index = tape.cursor;
+                tape.cursor += 1;
+                if let Some(decision) = tape.decisions.get(index)
+                    && decision.player_id == player_id && decision.request == request && decision.state == state
+                    && valid_response(&decision.request, &decision.response)
+                    && let Ok(response) = serde_json::from_value::<$response>(decision.response.clone())
+                {
+                    return response;
+                }
+                tape.error = Some(format!("decision {index} does not match the replay request or state"));
+                return $fallback;
+            }
+            let response = self.strategy.$method(game_state, ruleset, player_id, $($argument),*);
+            tape.decisions.push(Decision { player_id, request, state, response: json!(response) });
+            response
+        }
+    };
+}
+
+impl PlayerStrategy for RecordedStrategy {
+    record_decision!(should_purchase_property, bool, false, tile_id: TileId);
+    record_decision!(choose_max_auction_bid, Cash, 0, tile_id: TileId);
+    record_decision!(choose_jail_action, JailAction, JailAction::RollForDoubles);
+    record_decision!(choose_property_to_improve, Option<PropertyId>, None);
+    record_decision!(choose_tile_to_unmortgage, Option<TileId>, None);
+    record_decision!(propose_trade, Option<TradeOffer>, None);
+    record_decision!(should_accept_trade, bool, false, trade_offer: &TradeOffer);
+}
+
+fn valid_response(
+    request: &Value,
+    response: &Value,
+) -> bool {
+    match request["method"].as_str() {
+        Some("choose_tile_to_unmortgage") => response.is_null() || response.as_u64().is_some_and(|tile| tile < crate::game::tile::data::TILE_COUNT as u64),
+        Some("choose_property_to_improve") => response.is_null() || response.as_u64().is_some_and(|property| property < crate::game::tile::data::PROPERTY_COUNT as u64),
+        _ => true,
+    }
+}
+
+fn snapshot<const N: usize>(state: &GameState<N>) -> Value {
+    json!({
+        "cash": state.cash_by_player_id.as_slice(),
+        "positions": state.position_by_player_id.as_slice(),
+        "jail_turns": state.jail_turn_count_by_player_id.as_slice(),
+        "jailed_players": state.jailed_players,
+        "bankrupt_players": state.bankrupt_players,
+        "current_player": state.current_player_id,
+        "consecutive_doubles": state.consecutive_double_count,
+        "free_parking": state.free_parking_jackpot,
+        "jail_cards": state.get_out_of_jail_free_card_holder_by_deck_kind,
+        "decks": state.deck_state_by_deck_kind.iter().map(|deck| json!({
+            "cards": deck.card_id_by_draw_position, "next": deck.next_draw_position
+        })).collect::<Vec<_>>(),
+        "rng": state.rng.state(),
+        "owned_tiles": state.board.owned_tiles_by_player_id.as_slice(),
+        "mortgaged_tiles": state.board.mortgaged_tiles,
+        "improvements": state.board.improvement_level_by_property_id,
+        "bank_houses": state.board.bank_house_count,
+        "bank_hotels": state.board.bank_hotel_count
+    })
+}
+
+pub fn record_game(
+    ruleset: Ruleset,
+    strategies: Vec<ConfigurableStrategy>,
+    seed: u64,
+    max_turn_count: u32,
+) -> Result<GameTrace> {
+    let mut trace = GameTrace {
+        schema_version: 1,
+        build: serde_json::to_value(BuildProvenance::current())?,
+        ruleset,
+        strategies,
+        seed,
+        max_turn_count,
+        decisions: Vec::new(),
+        turn_states: Vec::new(),
+        winner: None,
+    };
+    dispatch(&mut trace, false)?;
+    Ok(trace)
+}
+
+pub fn replay_game(trace: &GameTrace) -> Result<()> {
+    let mut replay = trace.clone();
+    dispatch(&mut replay, true)
+}
+
+fn dispatch(
+    trace: &mut GameTrace,
+    replay: bool,
+) -> Result<()> {
+    if trace.schema_version != 1 || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 and a positive turn limit");
+    }
+    match trace.strategies.len() {
+        2 => run::<2>(trace, replay),
+        3 => run::<3>(trace, replay),
+        4 => run::<4>(trace, replay),
+        5 => run::<5>(trace, replay),
+        6 => run::<6>(trace, replay),
+        7 => run::<7>(trace, replay),
+        8 => run::<8>(trace, replay),
+        _ => bail!("trace requires 2 to 8 player strategies"),
+    }
+}
+
+fn run<const N: usize>(
+    trace: &mut GameTrace,
+    replay: bool,
+) -> Result<()> {
+    let tape = Rc::new(RefCell::new(DecisionTape {
+        replay,
+        decisions: if replay { trace.decisions.clone() } else { Vec::new() },
+        ..DecisionTape::default()
+    }));
+    let mut strategies: [RecordedStrategy; N] = core::array::from_fn(|index| RecordedStrategy {
+        strategy: trace.strategies[index],
+        tape: tape.clone(),
+    });
+    let mut state = GameState::<N>::create_starting_state(&trace.ruleset, trace.seed);
+    let mut turn_states = vec![snapshot(&state)];
+    let mut winner = None;
+    for _ in 0..trace.max_turn_count {
+        play_turn(&mut state, &trace.ruleset, &mut strategies);
+        if let Some(error) = &tape.borrow().error {
+            bail!("{error}");
+        }
+        turn_states.push(snapshot(&state));
+        let active = ((1u16 << N) - 1) & !(state.bankrupt_players as u16);
+        if active.count_ones() == 1 {
+            winner = Some(active.trailing_zeros() as PlayerId);
+            break;
+        }
+    }
+    if replay {
+        if tape.borrow().cursor != trace.decisions.len() {
+            bail!("replay left unused decisions");
+        }
+        if turn_states != trace.turn_states || winner != trace.winner {
+            bail!("replay turn states or winner differ from the recording");
+        }
+    } else {
+        trace.decisions = std::mem::take(&mut tape.borrow_mut().decisions);
+        trace.turn_states = turn_states;
+        trace.winner = winner;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::engine::turn::play_game;
+    use crate::game::ruleset::data::DEX_RULESET;
+    use crate::game::strategy::data::{
+        BASELINE_STRATEGY,
+        DEX_OPTIMAL_STRATEGY,
+    };
+
+    #[test]
+    fn recording_preserves_game_and_replay_ignores_strategy_changes() {
+        let policies = vec![BASELINE_STRATEGY, DEX_OPTIMAL_STRATEGY];
+        let trace = record_game(DEX_RULESET, policies.clone(), 7, 1000).unwrap();
+        let mut state = GameState::<2>::create_starting_state(&DEX_RULESET, 7);
+        play_game(&mut state, &DEX_RULESET, &mut [policies[0], policies[1]], 1000);
+        assert_eq!(trace.turn_states.last(), Some(&snapshot(&state)));
+        let mut restored: GameTrace = serde_json::from_str(&serde_json::to_string(&trace).unwrap()).unwrap();
+        restored.strategies = vec![DEX_OPTIMAL_STRATEGY; 2];
+        replay_game(&restored).unwrap();
+        restored.decisions[0].request = json!("corrupt");
+        assert!(replay_game(&restored).is_err());
+    }
+
+    #[test]
+    fn replay_rejects_missing_extra_and_changed_data() {
+        let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 17, 10).unwrap();
+        let mut changed = trace.clone();
+        changed.decisions.pop();
+        assert!(replay_game(&changed).is_err());
+        let mut changed = trace.clone();
+        changed.decisions.push(changed.decisions[0].clone());
+        assert!(replay_game(&changed).is_err());
+        let mut changed = trace.clone();
+        changed.turn_states[0] = Value::Null;
+        assert!(replay_game(&changed).is_err());
+        let mut changed = trace;
+        changed.seed += 1;
+        assert!(replay_game(&changed).is_err());
+    }
+
+    #[test]
+    fn replay_checks_all_supported_player_counts() {
+        for players in 2..=8 {
+            let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; players], 3, 5).unwrap();
+            replay_game(&trace).unwrap();
+        }
+    }
+
+    #[test]
+    fn replay_rejects_out_of_range_unmortgage_choices() {
+        let mut trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 2], 3, 5).unwrap();
+        let decision = trace.decisions.iter_mut().find(|decision| decision.request["method"] == "choose_tile_to_unmortgage").unwrap();
+        decision.response = json!(255);
+        assert!(replay_game(&trace).is_err());
+    }
+}

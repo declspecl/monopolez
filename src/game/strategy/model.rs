@@ -9,7 +9,7 @@ use crate::game::tile::model::{
 use crate::game::trade::model::TradeOffer;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum JailAction {
     RollForDoubles,
     PayBail,

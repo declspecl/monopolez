@@ -8,7 +8,7 @@ use crate::game::tile::model::{
 // one bit per deck kind (2) < 8 bits
 pub type DeckKindSetMask = u8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TradeOffer {
     pub proposer_player_id: PlayerId,
     pub recipient_player_id: PlayerId,

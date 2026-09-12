@@ -25,6 +25,12 @@ pub struct WyRand {
 }
 
 impl WyRand {
+    pub const fn state(&self) -> u64 {
+        self.state
+    }
+}
+
+impl WyRand {
     pub const fn new(seed: u64) -> Self {
         Self { state: seed }
     }
