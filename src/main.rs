@@ -133,11 +133,17 @@ fn main() -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": 1, "build": BuildProvenance::current(),
                     "verified": true, "turn_count": trace.turn_states.len() - 1,
-                    "decision_count": trace.decisions.len(), "winner": trace.winner
+                    "decision_count": trace.decisions.len(), "winner": trace.winner,
+                    "event_count": trace.events.len(), "events_verified": trace.schema_version >= 2
                 }))?
             );
         } else {
-            println!("verified {} turns and {} decisions", trace.turn_states.len() - 1, trace.decisions.len());
+            println!(
+                "verified {} turns and {} decisions ({} recorded events)",
+                trace.turn_states.len() - 1,
+                trace.decisions.len(),
+                trace.events.len()
+            );
         }
         return Ok(());
     }

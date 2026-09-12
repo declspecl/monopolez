@@ -50,5 +50,11 @@ pub fn run_auction<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 
         game_state.cash_by_player_id[winning_index] -= sale_price;
         game_state.board.owned_tiles_by_player_id[winning_index] |= 1 << tile_id;
+        strategies[winning_index].record_event(super::event::GameEvent::PropertyPurchased {
+            player_id: winning_player_id,
+            tile_id,
+            price: sale_price,
+            auction: true,
+        });
     }
 }

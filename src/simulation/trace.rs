@@ -16,6 +16,7 @@ use serde_json::{
 
 use super::provenance::BuildProvenance;
 use crate::game::board::model::PlayerId;
+use crate::game::engine::event::GameEvent;
 use crate::game::engine::turn::play_turn;
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
@@ -48,8 +49,17 @@ pub struct GameTrace {
     pub seed: u64,
     pub max_turn_count: u32,
     pub decisions: Vec<Decision>,
+    #[serde(default)]
+    pub events: Vec<EventRecord>,
     pub turn_states: Vec<Value>,
     pub winner: Option<PlayerId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventRecord {
+    pub turn: u32,
+    pub decisions_before: usize,
+    pub event: GameEvent,
 }
 
 #[derive(Default)]
@@ -58,6 +68,10 @@ struct DecisionTape {
     replay: bool,
     cursor: usize,
     error: Option<String>,
+    events: Vec<EventRecord>,
+    event_cursor: usize,
+    turn: u32,
+    verify_events: bool,
 }
 
 struct RecordedStrategy {
@@ -101,6 +115,35 @@ macro_rules! record_decision {
 }
 
 impl PlayerStrategy for RecordedStrategy {
+    fn record_event(
+        &mut self,
+        event: GameEvent,
+    ) {
+        let mut tape = self.tape.borrow_mut();
+        if tape.error.is_some() {
+            return;
+        }
+        if matches!(event, GameEvent::TurnStarted { .. }) {
+            tape.turn += 1;
+        }
+        let record = EventRecord {
+            turn: tape.turn,
+            decisions_before: if tape.replay { tape.cursor } else { tape.decisions.len() },
+            event,
+        };
+        if tape.replay {
+            if tape.verify_events {
+                let index = tape.event_cursor;
+                if tape.events.get(index) != Some(&record) {
+                    tape.error = Some(format!("event {index} differs from the recording"));
+                }
+                tape.event_cursor += 1;
+            }
+        } else {
+            tape.events.push(record);
+        }
+    }
+
     record_decision!(should_purchase_property, bool, false, tile_id: TileId);
     record_decision!(choose_max_auction_bid, Cash, 0, tile_id: TileId);
     record_decision!(choose_jail_action, JailAction, JailAction::RollForDoubles);
@@ -151,13 +194,14 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 1,
+        schema_version: 2,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
         seed,
         max_turn_count,
         decisions: Vec::new(),
+        events: Vec::new(),
         turn_states: Vec::new(),
         winner: None,
     };
@@ -174,8 +218,11 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if trace.schema_version != 1 || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1 and a positive turn limit");
+    if !(1..=2).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 or 2 and a positive turn limit");
+    }
+    if trace.schema_version == 1 && !trace.events.is_empty() {
+        bail!("schema version 1 does not support event verification");
     }
     match trace.strategies.len() {
         2 => run::<2>(trace, replay),
@@ -196,6 +243,8 @@ fn run<const N: usize>(
     let tape = Rc::new(RefCell::new(DecisionTape {
         replay,
         decisions: if replay { trace.decisions.clone() } else { Vec::new() },
+        events: if replay { trace.events.clone() } else { Vec::new() },
+        verify_events: trace.schema_version == 2,
         ..DecisionTape::default()
     }));
     let mut strategies: [RecordedStrategy; N] = core::array::from_fn(|index| RecordedStrategy {
@@ -221,11 +270,15 @@ fn run<const N: usize>(
         if tape.borrow().cursor != trace.decisions.len() {
             bail!("replay left unused decisions");
         }
+        if trace.schema_version == 2 && tape.borrow().event_cursor != trace.events.len() {
+            bail!("replay left unused events");
+        }
         if turn_states != trace.turn_states || winner != trace.winner {
             bail!("replay turn states or winner differ from the recording");
         }
     } else {
         trace.decisions = std::mem::take(&mut tape.borrow_mut().decisions);
+        trace.events = std::mem::take(&mut tape.borrow_mut().events);
         trace.turn_states = turn_states;
         trace.winner = winner;
     }
@@ -287,5 +340,85 @@ mod tests {
         let decision = trace.decisions.iter_mut().find(|decision| decision.request["method"] == "choose_tile_to_unmortgage").unwrap();
         decision.response = json!(255);
         assert!(replay_game(&trace).is_err());
+    }
+
+    #[test]
+    fn event_records_preserve_turn_and_decision_order() {
+        let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 3, 20).unwrap();
+        assert_eq!(
+            trace.events[0],
+            EventRecord {
+                turn: 1,
+                decisions_before: 0,
+                event: GameEvent::TurnStarted { player_id: 0 }
+            }
+        );
+        assert_eq!(trace.events.iter().filter(|record| matches!(record.event, GameEvent::TurnStarted { .. })).count(), 20);
+        assert!(trace.events.windows(2).all(|pair| pair[0].turn <= pair[1].turn && pair[0].decisions_before <= pair[1].decisions_before));
+        assert!(trace.events.iter().any(|record| matches!(record.event, GameEvent::DiceRolled { .. })));
+        assert!(trace.events.iter().any(|record| matches!(record.event, GameEvent::Landed { .. })));
+        replay_game(&trace).unwrap();
+        let mut changed = trace.clone();
+        changed.events[0].turn += 1;
+        assert!(replay_game(&changed).is_err());
+        let mut changed = trace.clone();
+        changed.events.pop();
+        assert!(replay_game(&changed).is_err());
+        let mut changed = trace.clone();
+        changed.events.push(changed.events.last().unwrap().clone());
+        assert!(replay_game(&changed).is_err());
+        let mut legacy = trace;
+        legacy.schema_version = 1;
+        legacy.events.clear();
+        replay_game(&legacy).unwrap();
+    }
+
+    #[test]
+    fn payment_events_distinguish_success_and_bankruptcy() {
+        use crate::game::engine::payment::{
+            Creditor,
+            charge_player,
+        };
+        let tape = Rc::new(RefCell::new(DecisionTape::default()));
+        let mut strategies: [RecordedStrategy; 2] = core::array::from_fn(|_| RecordedStrategy {
+            strategy: BASELINE_STRATEGY,
+            tape: tape.clone(),
+        });
+        let mut state = GameState::<2>::create_starting_state(&DEX_RULESET, 0);
+        charge_player(&mut state, &DEX_RULESET, &mut strategies, 0, 100, Creditor::Player(1));
+        let events: Vec<_> = tape.borrow().events.iter().map(|record| record.event).collect();
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::PaymentDue {
+                    player_id: 0,
+                    creditor: Creditor::Player(1),
+                    amount: 100
+                },
+                GameEvent::PaymentCompleted {
+                    player_id: 0,
+                    creditor: Creditor::Player(1),
+                    amount: 100
+                }
+            ]
+        );
+        tape.borrow_mut().events.clear();
+        charge_player(&mut state, &DEX_RULESET, &mut strategies, 0, 2000, Creditor::Bank);
+        let events: Vec<_> = tape.borrow().events.iter().map(|record| record.event).collect();
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::PaymentDue {
+                    player_id: 0,
+                    creditor: Creditor::Bank,
+                    amount: 2000
+                },
+                GameEvent::Bankrupt {
+                    player_id: 0,
+                    creditor: Creditor::Bank,
+                    remaining_cash: 1700
+                }
+            ]
+        );
     }
 }

@@ -18,7 +18,7 @@ use crate::game::tile::model::{
     TileSetMask,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Creditor {
     Bank,
     FreeParkingJackpot,
@@ -41,6 +41,11 @@ pub fn charge_player<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     creditor: Creditor,
 ) {
     let debtor_index = debtor_player_id as usize;
+    strategies[debtor_index].record_event(super::event::GameEvent::PaymentDue {
+        player_id: debtor_player_id,
+        creditor,
+        amount,
+    });
     if game_state.cash_by_player_id[debtor_index] < amount {
         run_trade_phase(game_state, ruleset, strategies, debtor_player_id, PermittedBarterTimesMask::DURING_PAYMENT);
     }
@@ -52,6 +57,11 @@ pub fn charge_player<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     if game_state.cash_by_player_id[debtor_index] >= amount {
         game_state.cash_by_player_id[debtor_index] -= amount;
         credit_creditor(game_state, creditor, amount);
+        strategies[debtor_index].record_event(super::event::GameEvent::PaymentCompleted {
+            player_id: debtor_player_id,
+            creditor,
+            amount,
+        });
     } else {
         declare_bankruptcy(game_state, ruleset, strategies, debtor_player_id, creditor);
     }
@@ -131,6 +141,11 @@ fn declare_bankruptcy<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 
     game_state.bankrupt_players |= 1 << debtor_player_id;
     game_state.jailed_players &= !(1 << debtor_player_id);
+    strategies[debtor_index].record_event(super::event::GameEvent::Bankrupt {
+        player_id: debtor_player_id,
+        creditor,
+        remaining_cash,
+    });
 
     if matches!(creditor, Creditor::Bank | Creditor::FreeParkingJackpot) && ruleset.property_purchase_decline_mode == PropertyPurchaseDeclineMode::Auction {
         auction_bank_owned_tiles(game_state, ruleset, strategies, debtor_player_id, owned_tiles);

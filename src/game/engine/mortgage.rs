@@ -25,6 +25,7 @@ pub fn run_mortgage_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         if !unmortgage_tile(game_state, player_id, tile_id) {
             return;
         }
+        strategies[player_id as usize].record_event(super::event::GameEvent::TileUnmortgaged { player_id, tile_id });
     }
 }
 

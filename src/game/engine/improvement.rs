@@ -35,6 +35,11 @@ pub fn run_improvement_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy
         if !improve_property(game_state, ruleset, player_id, property_id) {
             return;
         }
+        strategies[player_id as usize].record_event(super::event::GameEvent::BuildingPurchased {
+            player_id,
+            property_id,
+            level: game_state.board.improvement_level_by_property_id[property_id as usize],
+        });
     }
 }
 

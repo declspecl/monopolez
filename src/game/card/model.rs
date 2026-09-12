@@ -12,7 +12,7 @@ pub struct CardDefinition {
     pub effect: CardEffect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CardEffect {
     AdvanceToTile { tile_id: TileId },
     AdvanceToNearestRailroad,
@@ -28,7 +28,7 @@ pub enum CardEffect {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DeckKind {
     Chance,
     CommunityChest,

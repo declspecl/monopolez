@@ -83,6 +83,7 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     strategies: &mut [Strategy; PLAYER_COUNT],
 ) {
     let player_id = game_state.current_player_id;
+    strategies[player_id as usize].record_event(super::event::GameEvent::TurnStarted { player_id });
 
     run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
     run_mortgage_phase(game_state, ruleset, strategies, player_id);
@@ -108,6 +109,11 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 
     loop {
         let dice_roll = game_state.rng.roll_dice();
+        strategies[player_id as usize].record_event(super::event::GameEvent::DiceRolled {
+            player_id,
+            first: dice_roll.first_die,
+            second: dice_roll.second_die,
+        });
 
         if dice_roll.is_double() {
             game_state.consecutive_double_count += 1;
@@ -161,6 +167,11 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     }
 
     let dice_roll = game_state.rng.roll_dice();
+    strategies[player_index].record_event(super::event::GameEvent::DiceRolled {
+        player_id,
+        first: dice_roll.first_die,
+        second: dice_roll.second_die,
+    });
     if dice_roll.is_double() {
         release_player_from_jail(game_state, player_id);
 

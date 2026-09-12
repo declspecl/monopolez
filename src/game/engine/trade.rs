@@ -45,6 +45,7 @@ pub fn run_trade_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     }
 
     execute_trade(game_state, &trade_offer);
+    strategies[player_id as usize].record_event(super::event::GameEvent::TradeExecuted { offer: trade_offer });
 
     true
 }

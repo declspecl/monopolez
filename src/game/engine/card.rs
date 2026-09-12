@@ -51,6 +51,11 @@ pub fn draw_and_apply_card<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     dice_roll: DiceRoll,
 ) {
     let card = draw_card(game_state, deck_kind);
+    strategies[player_id as usize].record_event(super::event::GameEvent::CardDrawn {
+        player_id,
+        deck: deck_kind,
+        effect: card.effect,
+    });
     apply_card_effect(game_state, ruleset, strategies, player_id, deck_kind, card.effect, dice_roll);
 }
 
@@ -100,6 +105,11 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             advance_player_to_tile(game_state, ruleset, player_id, utility_tile_id);
 
             let fresh_dice_roll = game_state.rng.roll_dice();
+            strategies[player_index].record_event(super::event::GameEvent::DiceRolled {
+                player_id,
+                first: fresh_dice_roll.first_die,
+                second: fresh_dice_roll.second_die,
+            });
             resolve_landing(game_state, ruleset, strategies, player_id, fresh_dice_roll, RentModifier::NearestUtilityCard);
         },
         CardEffect::MoveBackward { tile_count } => {

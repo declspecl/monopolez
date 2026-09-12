@@ -1,5 +1,6 @@
 pub mod auction;
 pub mod card;
+pub mod event;
 pub mod improvement;
 pub mod landing;
 pub mod mortgage;

@@ -17,6 +17,12 @@ pub enum JailAction {
 }
 
 pub trait PlayerStrategy {
+    fn record_event(
+        &mut self,
+        _event: crate::game::engine::event::GameEvent,
+    ) {
+    }
+
     fn should_purchase_property<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
