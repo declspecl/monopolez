@@ -64,7 +64,7 @@ pub fn resolve_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         },
         TileKind::Tax => {
             let tax_amount = TAX_AMOUNT_BY_TILE_ID[tile_id as usize] as Cash;
-            charge_player(game_state, player_id, tax_amount, select_fee_creditor(ruleset));
+            charge_player(game_state, ruleset, strategies, player_id, tax_amount, select_fee_creditor(ruleset));
         },
         TileKind::Chance => draw_and_apply_card(game_state, ruleset, strategies, player_id, DeckKind::Chance, dice_roll),
         TileKind::CommunityChest => draw_and_apply_card(game_state, ruleset, strategies, player_id, DeckKind::CommunityChest, dice_roll),
@@ -94,7 +94,7 @@ fn resolve_ownable_tile_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrat
         Some(owner_player_id) if owner_player_id == player_id || game_state.board.is_tile_mortgaged(tile_id) => {},
         Some(owner_player_id) => {
             let rent = calculate_rent(game_state, tile_id, owner_player_id, dice_roll, rent_modifier);
-            charge_player(game_state, player_id, rent, Creditor::Player(owner_player_id));
+            charge_player(game_state, ruleset, strategies, player_id, rent, Creditor::Player(owner_player_id));
         },
     }
 }

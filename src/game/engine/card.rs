@@ -111,11 +111,11 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             game_state.get_out_of_jail_free_card_holder_by_deck_kind[deck_kind as usize] = Some(player_id);
         },
         CardEffect::CollectFromBank { amount } => game_state.cash_by_player_id[player_index] += amount as Cash,
-        CardEffect::PayBank { amount } => charge_player(game_state, player_id, amount as Cash, select_fee_creditor(ruleset)),
+        CardEffect::PayBank { amount } => charge_player(game_state, ruleset, strategies, player_id, amount as Cash, select_fee_creditor(ruleset)),
         CardEffect::CollectFromEachPlayer { amount } => {
             for other_player_id in 0..PLAYER_COUNT as PlayerId {
                 if other_player_id != player_id && game_state.bankrupt_players & (1 << other_player_id) == 0 {
-                    charge_player(game_state, other_player_id, amount as Cash, Creditor::Player(player_id));
+                    charge_player(game_state, ruleset, strategies, other_player_id, amount as Cash, Creditor::Player(player_id));
                 }
             }
         },
@@ -126,7 +126,7 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
                 }
 
                 if other_player_id != player_id && game_state.bankrupt_players & (1 << other_player_id) == 0 {
-                    charge_player(game_state, player_id, amount as Cash, Creditor::Player(other_player_id));
+                    charge_player(game_state, ruleset, strategies, player_id, amount as Cash, Creditor::Player(other_player_id));
                 }
             }
         },
@@ -135,7 +135,7 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             let repair_cost = house_count * amount_per_house as Cash + hotel_count * amount_per_hotel as Cash;
 
             if repair_cost > 0 {
-                charge_player(game_state, player_id, repair_cost, select_fee_creditor(ruleset));
+                charge_player(game_state, ruleset, strategies, player_id, repair_cost, select_fee_creditor(ruleset));
             }
         },
     }

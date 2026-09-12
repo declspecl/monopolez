@@ -151,7 +151,7 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         },
         JailAction::PayBail => {
             if game_state.cash_by_player_id[player_index] >= jail_bail_amount {
-                charge_player(game_state, player_id, jail_bail_amount, select_fee_creditor(ruleset));
+                charge_player(game_state, ruleset, strategies, player_id, jail_bail_amount, select_fee_creditor(ruleset));
                 release_player_from_jail(game_state, player_id);
 
                 return JailTurnResult::RollNormally;
@@ -172,7 +172,7 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         return JailTurnResult::StayInJail;
     }
 
-    charge_player(game_state, player_id, jail_bail_amount, select_fee_creditor(ruleset));
+    charge_player(game_state, ruleset, strategies, player_id, jail_bail_amount, select_fee_creditor(ruleset));
     if game_state.bankrupt_players & (1 << player_id) != 0 {
         return JailTurnResult::StayInJail;
     }
