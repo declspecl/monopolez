@@ -39,6 +39,12 @@ pub enum GameOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GameSummary {
+    pub outcome: GameOutcome,
+    pub turn_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum JailTurnResult {
     StayInJail,
     RollNormally,
@@ -50,19 +56,25 @@ pub fn play_game<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     ruleset: &Ruleset,
     strategies: &mut [Strategy; PLAYER_COUNT],
     max_turn_count: u32,
-) -> GameOutcome {
+) -> GameSummary {
     let all_players = ((1u16 << PLAYER_COUNT) - 1) as PlayerSetMask;
 
-    for _ in 0..max_turn_count {
+    for turn_index in 0..max_turn_count {
         play_turn(game_state, ruleset, strategies);
 
         let active_players = all_players & !game_state.bankrupt_players;
         if active_players.count_ones() == 1 {
-            return GameOutcome::Winner(active_players.trailing_zeros() as PlayerId);
+            return GameSummary {
+                outcome: GameOutcome::Winner(active_players.trailing_zeros() as PlayerId),
+                turn_count: turn_index + 1,
+            };
         }
     }
 
-    GameOutcome::TurnLimitReached
+    GameSummary {
+        outcome: GameOutcome::TurnLimitReached,
+        turn_count: max_turn_count,
+    }
 }
 
 pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
@@ -253,10 +265,10 @@ mod tests {
         let mut first_game_state = GameState::<PLAYER_COUNT>::create_starting_state(&ruleset, 99);
         let mut second_game_state = GameState::<PLAYER_COUNT>::create_starting_state(&ruleset, 99);
 
-        let first_outcome = play_game(&mut first_game_state, &ruleset, &mut create_strategies(), MAX_TURN_COUNT);
-        let second_outcome = play_game(&mut second_game_state, &ruleset, &mut create_strategies(), MAX_TURN_COUNT);
+        let first_summary = play_game(&mut first_game_state, &ruleset, &mut create_strategies(), MAX_TURN_COUNT);
+        let second_summary = play_game(&mut second_game_state, &ruleset, &mut create_strategies(), MAX_TURN_COUNT);
 
-        assert_eq!(first_outcome, second_outcome);
+        assert_eq!(first_summary, second_summary);
         assert_eq!(first_game_state, second_game_state);
     }
 
