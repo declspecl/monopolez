@@ -24,7 +24,7 @@ use crate::game::tile::model::OwnershipGroup;
 pub const MONOPOLY_COUNT_BUCKET_COUNT: usize = 5;
 pub const DEVELOPMENT_BUCKET_COUNT: usize = 4;
 
-const MONOPOLY_SNAPSHOT_TURN: u32 = 100;
+pub const MONOPOLY_SNAPSHOT_TURN: u32 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct GroupEntry {
@@ -43,6 +43,7 @@ pub struct MonopolyCountEntry {
 pub struct MonopolyReport {
     pub game_count: u32,
     pub decisive_game_count: u32,
+    pub snapshot_game_count: u32,
     pub group_entries: [GroupEntry; OwnershipGroup::COUNT],
     pub monopoly_count_entries: [MonopolyCountEntry; MONOPOLY_COUNT_BUCKET_COUNT],
     pub sole_monopoly_entries: [MonopolyCountEntry; OwnershipGroup::COUNT],
@@ -54,6 +55,7 @@ impl MonopolyReport {
         Self {
             game_count: 0,
             decisive_game_count: 0,
+            snapshot_game_count: 0,
             group_entries: [GroupEntry {
                 first_completion_count: 0,
                 first_completion_win_count: 0,
@@ -72,6 +74,7 @@ impl MonopolyReport {
         let mut combined = self;
         combined.game_count += other.game_count;
         combined.decisive_game_count += other.decisive_game_count;
+        combined.snapshot_game_count += other.snapshot_game_count;
 
         for group_index in 0..OwnershipGroup::COUNT {
             combined.group_entries[group_index].first_completion_count += other.group_entries[group_index].first_completion_count;
@@ -103,6 +106,9 @@ pub fn analyze_monopolies(
     strategy: ConfigurableStrategy,
     config: &TournamentConfig,
 ) -> Result<MonopolyReport> {
+    if config.game_count == 0 || config.max_turn_count == 0 {
+        bail!("analysis requires positive game and turn counts");
+    }
     match config.player_count {
         2 => Ok(analyze_games::<2>(ruleset, strategy, config)),
         3 => Ok(analyze_games::<3>(ruleset, strategy, config)),
@@ -151,6 +157,7 @@ fn analyze_game<const PLAYER_COUNT: usize>(
         record_completed_groups(&game_state, &mut first_holder_by_group, &mut completion_turn_by_group, turn_index);
 
         if turn_index + 1 == MONOPOLY_SNAPSHOT_TURN {
+            report.snapshot_game_count = 1;
             monopoly_count_by_player = count_monopolies_by_player(&game_state);
             sole_monopoly_group_by_player = find_sole_monopoly_group_by_player(&game_state);
             building_count_by_player = count_buildings_by_player(&game_state);
@@ -165,10 +172,6 @@ fn analyze_game<const PLAYER_COUNT: usize>(
         }
     }
 
-    if config.max_turn_count < MONOPOLY_SNAPSHOT_TURN {
-        monopoly_count_by_player = count_monopolies_by_player(&game_state);
-    }
-
     for group_index in 0..OwnershipGroup::COUNT {
         let Some(first_holder_player_id) = first_holder_by_group[group_index] else {
             continue;
@@ -180,6 +183,10 @@ fn analyze_game<const PLAYER_COUNT: usize>(
         if winner_player_id == Some(first_holder_player_id) {
             report.group_entries[group_index].first_completion_win_count = 1;
         }
+    }
+
+    if report.snapshot_game_count == 0 {
+        return report;
     }
 
     for (player_index, sole_monopoly_group) in sole_monopoly_group_by_player.iter().enumerate() {
@@ -291,7 +298,37 @@ mod tests {
         let bucketed_player_count: u32 = report.monopoly_count_entries.iter().map(|entry| entry.player_count).sum();
 
         assert_eq!(report.game_count, 500);
-        assert_eq!(bucketed_player_count, 500 * 4);
+        assert_eq!(bucketed_player_count, report.snapshot_game_count * 4);
         assert!(report.group_entries.iter().all(|entry| entry.first_completion_count <= report.game_count));
+    }
+
+    #[test]
+    fn short_runs_do_not_fabricate_snapshots() {
+        let config = TournamentConfig {
+            game_count: 20,
+            max_turn_count: 99,
+            seed: 3,
+            player_count: 4,
+        };
+        let report = analyze_monopolies(&DEX_RULESET, DEX_OPTIMAL_STRATEGY, &config).unwrap();
+        assert_eq!(report.snapshot_game_count, 0);
+        assert!(report.monopoly_count_entries.iter().all(|entry| entry.player_count == 0));
+        assert!(report.sole_monopoly_entries.iter().all(|entry| entry.player_count == 0));
+        assert!(report.sole_monopoly_development_entries.iter().all(|entry| entry.player_count == 0));
+    }
+
+    #[test]
+    fn games_ending_before_snapshot_are_excluded() {
+        let ruleset = Ruleset::builder().with_starting_player_money(0).with_go_passing_salary(0).with_go_landing_salary(0).build();
+        let config = TournamentConfig {
+            game_count: 50,
+            max_turn_count: 100,
+            seed: 0,
+            player_count: 2,
+        };
+        let report = analyze_monopolies(&ruleset, ConfigurableStrategy::new(), &config).unwrap();
+        assert!(report.decisive_game_count > 0);
+        assert!(report.snapshot_game_count < report.game_count);
+        assert_eq!(report.monopoly_count_entries.iter().map(|entry| entry.player_count).sum::<u32>(), report.snapshot_game_count * 2);
     }
 }

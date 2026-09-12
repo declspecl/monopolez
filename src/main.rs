@@ -136,7 +136,23 @@ fn main() -> Result<()> {
 
         let report = analyze_monopolies(&ruleset, strategy, &tournament_config)?;
         if arguments.json {
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1,
+                    "ruleset": ruleset,
+                    "config": tournament_config,
+                    "strategy": strategy,
+                    "snapshot": {
+                        "turn": crate::simulation::analysis::MONOPOLY_SNAPSHOT_TURN,
+                        "turn_unit": "individual_player_turn",
+                        "population": "all_original_seats_in_games_reaching_snapshot",
+                        "development_unit": "improvement_level_sum_hotel_counts_as_five",
+                        "ownership": "all_complete_groups_including_railroads_utilities_and_mortgaged_tiles"
+                    },
+                    "report": report
+                }))?
+            );
         } else {
             print_monopoly_report(&report);
         }
@@ -259,20 +275,31 @@ fn main() -> Result<()> {
         };
 
         let session = tune_strategy_over_generations(&ruleset, &tournament_config, arguments.tune_rounds, arguments.tune_generations, &starting_pool)?;
+        let sweep = if arguments.sweep {
+            Some(sweep_parameters(&ruleset, session.champion(), &session.opponent_pool, &tournament_config)?)
+        } else {
+            None
+        };
         if arguments.json {
-            println!("{}", serde_json::to_string_pretty(&session)?);
+            let mut output = serde_json::to_value(&session)?;
+            output["sweep"] = serde_json::to_value(&sweep)?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
         } else {
             for (generation_index, report) in session.reports.iter().enumerate() {
                 println!("=== generation {generation_index}");
                 print_tuning_report(report);
                 println!();
             }
+            println!("held-out seed {}  games {} per strategy", session.validation.config.seed, session.validation.config.game_count);
+            println!(
+                "held-out baseline {:.2}%  champion {:.2}%",
+                session.validation.baseline.calculate_candidate_win_rate() * 100.0,
+                session.validation.champion.calculate_candidate_win_rate() * 100.0
+            );
         }
 
-        if arguments.sweep {
-            let champion = session.champion();
-            let steps = sweep_parameters(&ruleset, champion, &session.opponent_pool, &tournament_config)?;
-
+        if let Some(steps) = sweep {
             println!("=== sensitivity sweep of the champion against the opponent pool");
             for step in &steps {
                 println!(
@@ -319,6 +346,11 @@ fn print_monopoly_report(report: &MonopolyReport) {
     const GROUP_NAMES: [&str; 10] = ["brown", "light blue", "pink", "orange", "red", "yellow", "green", "dark blue", "railroads", "utilities"];
 
     println!("games {}  decisive {:.1}%", report.game_count, report.decisive_game_count as f64 / report.game_count as f64 * 100.0);
+    println!(
+        "snapshot games {}  excluded {} (ended before 100 total player turns)",
+        report.snapshot_game_count,
+        report.game_count - report.snapshot_game_count
+    );
     println!();
     println!("group        completed  first holder wins  avg completion turn");
 
@@ -351,9 +383,9 @@ fn print_monopoly_report(report: &MonopolyReport) {
     }
 
     println!();
-    println!("sole monopoly buildings    players  win rate");
+    println!("sole monopoly development (hotel = 5 levels)    players  win rate");
 
-    const DEVELOPMENT_LABELS: [&str; 4] = ["none", "1-4 buildings", "5-9 buildings", "10+ buildings"];
+    const DEVELOPMENT_LABELS: [&str; 4] = ["none", "1-4 levels", "5-9 levels", "10+ levels"];
     for (bucket_index, label) in DEVELOPMENT_LABELS.iter().enumerate() {
         let entry = report.sole_monopoly_development_entries[bucket_index];
         if entry.player_count == 0 {

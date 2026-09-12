@@ -13,7 +13,7 @@ use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
 use crate::game::strategy::configurable::ConfigurableStrategy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct TournamentConfig {
     pub game_count: u32,
     pub max_turn_count: u32,
