@@ -105,7 +105,7 @@ fn offer_purchase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let purchase_price = PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
     let can_afford = game_state.cash_by_player_id[player_index] >= purchase_price;
 
-    if can_afford && strategies[player_index].should_purchase_property(game_state, player_id, tile_id) {
+    if can_afford && strategies[player_index].should_purchase_property(game_state, ruleset, player_id, tile_id) {
         game_state.cash_by_player_id[player_index] -= purchase_price;
         game_state.board.owned_tiles_by_player_id[player_index] |= 1 << tile_id;
     } else if ruleset.property_purchase_decline_mode == PropertyPurchaseDeclineMode::Auction {

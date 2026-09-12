@@ -2,11 +2,22 @@ use super::model::{
     JailAction,
     PlayerStrategy,
 };
-use crate::game::board::model::PlayerId;
+use crate::game::board::model::{
+    PlayerId,
+    PropertyImprovementLevel,
+};
+use crate::game::engine::improvement::can_improve_property;
+use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
-use crate::game::tile::lut::PURCHASE_PRICE_BY_TILE_ID;
+use crate::game::tile::data::PROPERTY_COUNT;
+use crate::game::tile::lut::{
+    HOUSE_PURCHASE_PRICE_BY_TILE_ID,
+    PURCHASE_PRICE_BY_TILE_ID,
+    TILE_ID_BY_PROPERTY_ID,
+};
 use crate::game::tile::model::{
     Cash,
+    PropertyId,
     TileId,
 };
 
@@ -19,6 +30,7 @@ impl PlayerStrategy for GreedyStrategy {
     fn should_purchase_property<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
         player_id: PlayerId,
         tile_id: TileId,
     ) -> bool {
@@ -30,6 +42,7 @@ impl PlayerStrategy for GreedyStrategy {
     fn choose_max_auction_bid<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
         player_id: PlayerId,
         tile_id: TileId,
     ) -> Cash {
@@ -42,6 +55,7 @@ impl PlayerStrategy for GreedyStrategy {
     fn choose_jail_action<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
         player_id: PlayerId,
     ) -> JailAction {
         let holds_get_out_of_jail_free_card = game_state.get_out_of_jail_free_card_holder_by_deck_kind.contains(&Some(player_id));
@@ -51,5 +65,33 @@ impl PlayerStrategy for GreedyStrategy {
         } else {
             JailAction::RollForDoubles
         }
+    }
+
+    fn choose_property_to_improve<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        ruleset: &Ruleset,
+        player_id: PlayerId,
+    ) -> Option<PropertyId> {
+        let mut least_improved_property: Option<(PropertyImprovementLevel, PropertyId)> = None;
+
+        for property_id in 0..PROPERTY_COUNT {
+            let tile_id = TILE_ID_BY_PROPERTY_ID[property_id];
+            let house_purchase_price = HOUSE_PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
+            if game_state.cash_by_player_id[player_id as usize] < house_purchase_price + self.cash_reserve {
+                continue;
+            }
+
+            if !can_improve_property(game_state, ruleset, player_id, property_id as PropertyId) {
+                continue;
+            }
+
+            let improvement_level = game_state.board.improvement_level_by_property_id[property_id];
+            if least_improved_property.is_none_or(|(lowest_improvement_level, _)| improvement_level < lowest_improvement_level) {
+                least_improved_property = Some((improvement_level, property_id as PropertyId));
+            }
+        }
+
+        least_improved_property.map(|(_, property_id)| property_id)
     }
 }

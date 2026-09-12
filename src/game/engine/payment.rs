@@ -1,16 +1,11 @@
-use crate::game::board::data::HOTEL_IMPROVEMENT_LEVEL;
+use super::improvement::sell_one_building;
 use crate::game::board::model::PlayerId;
 use crate::game::ruleset::model::{
     FreeParkingJackpotMode,
     Ruleset,
 };
 use crate::game::state::model::GameState;
-use crate::game::tile::data::PROPERTY_COUNT;
-use crate::game::tile::lut::{
-    HOUSE_PURCHASE_PRICE_BY_TILE_ID,
-    MORTGAGE_VALUE_BY_TILE_ID,
-    TILE_ID_BY_PROPERTY_ID,
-};
+use crate::game::tile::lut::MORTGAGE_VALUE_BY_TILE_ID;
 use crate::game::tile::model::Cash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -65,27 +60,10 @@ fn raise_cash<const PLAYER_COUNT: usize>(
 ) {
     let player_index = player_id as usize;
 
-    for property_id in 0..PROPERTY_COUNT {
-        if game_state.cash_by_player_id[player_index] >= required_amount {
-            return;
+    while game_state.cash_by_player_id[player_index] < required_amount {
+        if sell_one_building(game_state, player_id) == 0 {
+            break;
         }
-
-        let tile_id = TILE_ID_BY_PROPERTY_ID[property_id];
-        let improvement_level = game_state.board.improvement_level_by_property_id[property_id];
-        if improvement_level == 0 || game_state.board.get_tile_owner(tile_id) != Some(player_id) {
-            continue;
-        }
-
-        let building_sale_price = HOUSE_PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash / 2;
-        game_state.cash_by_player_id[player_index] += building_sale_price * improvement_level as Cash;
-
-        if improvement_level == HOTEL_IMPROVEMENT_LEVEL {
-            game_state.board.bank_hotel_count += 1;
-        } else {
-            game_state.board.bank_house_count += improvement_level;
-        }
-
-        game_state.board.improvement_level_by_property_id[property_id] = 0;
     }
 
     let mut unmortgaged_owned_tiles = game_state.board.owned_tiles_by_player_id[player_index] & !game_state.board.mortgaged_tiles;

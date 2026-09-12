@@ -32,7 +32,7 @@ pub fn run_auction<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         }
 
         let max_bid = strategies[bidder_index]
-            .choose_max_auction_bid(game_state, bidder_player_id, tile_id)
+            .choose_max_auction_bid(game_state, ruleset, bidder_player_id, tile_id)
             .min(game_state.cash_by_player_id[bidder_index]);
 
         if max_bid > winning_bid {

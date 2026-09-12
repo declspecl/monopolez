@@ -1,3 +1,4 @@
+use super::improvement::run_improvement_phase;
 use super::landing::{
     RentModifier,
     resolve_landing,
@@ -66,6 +67,8 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 ) {
     let player_id = game_state.current_player_id;
 
+    run_improvement_phase(game_state, ruleset, strategies, player_id);
+
     if game_state.jailed_players & (1 << player_id) != 0 {
         match take_jail_turn(game_state, ruleset, strategies, player_id) {
             JailTurnResult::StayInJail => {
@@ -117,7 +120,7 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let player_index = player_id as usize;
     let jail_bail_amount = ruleset.jail_bail_amount as Cash;
 
-    match strategies[player_index].choose_jail_action(game_state, player_id) {
+    match strategies[player_index].choose_jail_action(game_state, ruleset, player_id) {
         JailAction::UseGetOutOfJailFreeCard => {
             let held_deck_index = game_state.get_out_of_jail_free_card_holder_by_deck_kind.iter().position(|holder| *holder == Some(player_id));
             if let Some(held_deck_index) = held_deck_index {
@@ -177,6 +180,11 @@ fn end_turn<const PLAYER_COUNT: usize>(game_state: &mut GameState<PLAYER_COUNT>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::board::data::{
+        BANK_STARTING_HOTEL_COUNT,
+        BANK_STARTING_HOUSE_COUNT,
+        HOTEL_IMPROVEMENT_LEVEL,
+    };
     use crate::game::strategy::greedy::GreedyStrategy;
     use crate::game::tile::lut::OWNABLE_TILE_SET_MASK;
 
@@ -206,6 +214,27 @@ mod tests {
                     assert_eq!(game_state.cash_by_player_id[player_index], 0);
                 }
             }
+
+            let mut houses_in_play = 0;
+            let mut hotels_in_play = 0;
+            for improvement_level in game_state.board.improvement_level_by_property_id {
+                if improvement_level == HOTEL_IMPROVEMENT_LEVEL {
+                    hotels_in_play += 1;
+                } else {
+                    houses_in_play += improvement_level as u32;
+                }
+            }
+
+            assert_eq!(
+                houses_in_play + game_state.board.bank_house_count as u32,
+                BANK_STARTING_HOUSE_COUNT as u32,
+                "houses should be conserved"
+            );
+            assert_eq!(
+                hotels_in_play + game_state.board.bank_hotel_count as u32,
+                BANK_STARTING_HOTEL_COUNT as u32,
+                "hotels should be conserved"
+            );
 
             assert_eq!(all_owned_tiles & !OWNABLE_TILE_SET_MASK, 0, "only ownable tiles should be owned");
         }
