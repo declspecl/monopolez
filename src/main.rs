@@ -14,9 +14,15 @@ use crate::game::ruleset::model::{
     FreeParkingJackpotMode,
     Ruleset,
 };
+use crate::game::strategy::configurable::ConfigurableStrategy;
 use crate::game::tile::model::{
     Cash,
     Money,
+};
+use crate::simulation::analysis::{
+    MONOPOLY_COUNT_BUCKET_COUNT,
+    MonopolyReport,
+    analyze_monopolies,
 };
 use crate::simulation::model::{
     RulesetKind,
@@ -25,7 +31,6 @@ use crate::simulation::model::{
     StrategyKind,
 };
 use crate::simulation::runner::run_simulation;
-use crate::game::strategy::configurable::ConfigurableStrategy;
 use crate::simulation::tournament::{
     TournamentConfig,
     run_pool_tournament,
@@ -92,6 +97,9 @@ struct CliArguments {
     #[arg(long)]
     vs_pool: bool,
 
+    #[arg(long)]
+    analyze: bool,
+
     #[arg(long, value_delimiter = ',', default_value = "greedy")]
     strategies: Vec<StrategyKind>,
 
@@ -117,6 +125,25 @@ fn main() -> Result<()> {
         strategy_kinds: arguments.strategies.clone(),
     };
 
+    if arguments.analyze {
+        let strategy = load_candidate_strategy(&arguments)?;
+        let tournament_config = TournamentConfig {
+            game_count: arguments.game_count,
+            max_turn_count: arguments.max_turn_count,
+            seed: arguments.seed,
+            player_count: arguments.player_count,
+        };
+
+        let report = analyze_monopolies(&ruleset, strategy, &tournament_config)?;
+        if arguments.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print_monopoly_report(&report);
+        }
+
+        return Ok(());
+    }
+
     if arguments.vs_pool {
         let candidate = load_candidate_strategy(&arguments)?;
         let opponent_pool = load_strategy_pool(&arguments)?;
@@ -132,7 +159,12 @@ fn main() -> Result<()> {
         if arguments.json {
             println!("{}", serde_json::to_string(&result)?);
         } else {
-            println!("win {:.2}%  decisive {:.1}%  turns {:.0}", result.calculate_candidate_win_rate() * 100.0, result.calculate_decisive_game_ratio() * 100.0, result.calculate_average_turn_count());
+            println!(
+                "win {:.2}%  decisive {:.1}%  turns {:.0}",
+                result.calculate_candidate_win_rate() * 100.0,
+                result.calculate_decisive_game_ratio() * 100.0,
+                result.calculate_average_turn_count()
+            );
         }
 
         return Ok(());
@@ -243,7 +275,13 @@ fn main() -> Result<()> {
 
             println!("=== sensitivity sweep of the champion against the opponent pool");
             for step in &steps {
-                println!("{:<26} {:<6} win {:.2}%  decisive {:.1}%", step.parameter_name, step.value, step.win_rate * 100.0, step.decisive_game_ratio * 100.0);
+                println!(
+                    "{:<26} {:<6} win {:.2}%  decisive {:.1}%",
+                    step.parameter_name,
+                    step.value,
+                    step.win_rate * 100.0,
+                    step.decisive_game_ratio * 100.0
+                );
             }
         }
 
@@ -275,6 +313,72 @@ fn load_ruleset(arguments: &CliArguments) -> Result<Ruleset> {
     let ruleset_json = fs::read_to_string(ruleset_file).with_context(|| format!("failed to read ruleset file {}", ruleset_file.display()))?;
 
     serde_json::from_str(&ruleset_json).with_context(|| format!("failed to parse ruleset file {}", ruleset_file.display()))
+}
+
+fn print_monopoly_report(report: &MonopolyReport) {
+    const GROUP_NAMES: [&str; 10] = ["brown", "light blue", "pink", "orange", "red", "yellow", "green", "dark blue", "railroads", "utilities"];
+
+    println!("games {}  decisive {:.1}%", report.game_count, report.decisive_game_count as f64 / report.game_count as f64 * 100.0);
+    println!();
+    println!("group        completed  first holder wins  avg completion turn");
+
+    for (group_index, group_name) in GROUP_NAMES.iter().enumerate() {
+        let entry = report.group_entries[group_index];
+        if entry.first_completion_count == 0 {
+            println!("{group_name:<12} {:>9}  {:>16}  {:>19}", 0, "-", "-");
+
+            continue;
+        }
+
+        println!(
+            "{group_name:<12} {:>8.1}%  {:>15.1}%  {:>19.1}",
+            entry.first_completion_count as f64 / report.game_count as f64 * 100.0,
+            entry.first_completion_win_count as f64 / entry.first_completion_count as f64 * 100.0,
+            entry.total_completion_turn as f64 / entry.first_completion_count as f64
+        );
+    }
+
+    println!();
+    println!("sole monopoly at turn 100   players  win rate");
+
+    for (group_index, group_name) in GROUP_NAMES.iter().enumerate() {
+        let entry = report.sole_monopoly_entries[group_index];
+        if entry.player_count == 0 {
+            continue;
+        }
+
+        println!("{group_name:<27} {:>7}  {:>7.1}%", entry.player_count, entry.win_count as f64 / entry.player_count as f64 * 100.0);
+    }
+
+    println!();
+    println!("sole monopoly buildings    players  win rate");
+
+    const DEVELOPMENT_LABELS: [&str; 4] = ["none", "1-4 buildings", "5-9 buildings", "10+ buildings"];
+    for (bucket_index, label) in DEVELOPMENT_LABELS.iter().enumerate() {
+        let entry = report.sole_monopoly_development_entries[bucket_index];
+        if entry.player_count == 0 {
+            continue;
+        }
+
+        println!("{label:<25} {:>8}  {:>7.1}%", entry.player_count, entry.win_count as f64 / entry.player_count as f64 * 100.0);
+    }
+
+    println!();
+    println!("monopolies at turn 100   players  win rate");
+
+    for (bucket_index, entry) in report.monopoly_count_entries.iter().enumerate() {
+        if entry.player_count == 0 {
+            continue;
+        }
+
+        let label = if bucket_index == MONOPOLY_COUNT_BUCKET_COUNT - 1 {
+            format!("{bucket_index}+")
+        } else {
+            bucket_index.to_string()
+        };
+
+        println!("{label:<24} {:>7}  {:>7.1}%", entry.player_count, entry.win_count as f64 / entry.player_count as f64 * 100.0);
+    }
 }
 
 fn load_strategy_pool(arguments: &CliArguments) -> Result<Vec<ConfigurableStrategy>> {
@@ -324,7 +428,13 @@ fn print_tuning_report(report: &TuningReport) {
     println!();
 
     for step in report.steps.iter().filter(|step| step.is_improvement) {
-        println!("improved {:<26} -> {:<5} win {:.2}%  decisive {:.1}%", step.parameter_name, step.value, step.win_rate * 100.0, step.decisive_game_ratio * 100.0);
+        println!(
+            "improved {:<26} -> {:<5} win {:.2}%  decisive {:.1}%",
+            step.parameter_name,
+            step.value,
+            step.win_rate * 100.0,
+            step.decisive_game_ratio * 100.0
+        );
     }
 }
 
