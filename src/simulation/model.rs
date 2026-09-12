@@ -2,10 +2,30 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::game::board::data::MAX_PLAYER_COUNT;
+use crate::game::ruleset::data::{
+    DEX_RULESET,
+    OFFICIAL_RULESET,
+};
+use crate::game::ruleset::model::Ruleset;
 use crate::game::strategy::any::AnyStrategy;
 use crate::game::strategy::cautious::CautiousStrategy;
 use crate::game::strategy::greedy::GreedyStrategy;
 use crate::game::tile::model::Cash;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
+pub enum RulesetKind {
+    Official,
+    Dex,
+}
+
+impl RulesetKind {
+    pub const fn to_ruleset(self) -> Ruleset {
+        match self {
+            Self::Official => OFFICIAL_RULESET,
+            Self::Dex => DEX_RULESET,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum StrategyKind {

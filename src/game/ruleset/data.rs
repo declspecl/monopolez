@@ -36,3 +36,21 @@ pub const OFFICIAL_JAIL_BAIL_AMOUNT: Money = 50;
 pub const OFFICIAL_MAX_JAIL_TURN_COUNT: TurnCount = 3;
 
 pub const OFFICIAL_RULESET: Ruleset = RulesetBuilder::new().build();
+
+pub const DEX_RULESET: Ruleset = RulesetBuilder::new()
+    .with_starting_player_money(1800)
+    .with_free_parking_jackpot_mode(FreeParkingJackpotMode::TaxesAndFees)
+    .with_go_landing_salary(0)
+    .with_go_passing_salary(200)
+    .with_permitted_barter_tactics(
+        PermittedBarterTacticsMask::MONEY
+            .union(PermittedBarterTacticsMask::UNMORTGAGED_PROPERTIES)
+            .union(PermittedBarterTacticsMask::MORTGAGED_PROPERTIES)
+            .union(PermittedBarterTacticsMask::GET_OUT_OF_JAIL_FREE_CARDS)
+            .union(PermittedBarterTacticsMask::REVENUE_SHARING)
+            .union(PermittedBarterTacticsMask::MODIFIED_RENT_PAYMENTS),
+    )
+    .with_permitted_barter_times(PermittedBarterTimesMask::START_OF_TURN)
+    .with_property_improvement_distribution(PropertyImprovementDistribution::Arbitrary)
+    .with_jail_bail_amount(100)
+    .build();

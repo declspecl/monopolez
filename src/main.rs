@@ -19,11 +19,17 @@ use crate::game::tile::model::{
     Money,
 };
 use crate::simulation::model::{
+    RulesetKind,
     SimulationConfig,
     SimulationSummary,
     StrategyKind,
 };
 use crate::simulation::runner::run_simulation;
+use crate::simulation::tournament::TournamentConfig;
+use crate::simulation::tuner::{
+    TuningReport,
+    tune_strategy_over_generations,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "monopolez", about = "high performance monopoly simulator")]
@@ -43,11 +49,23 @@ struct CliArguments {
     #[arg(long, default_value_t = 100)]
     cash_reserve: Cash,
 
-    #[arg(long, default_value_t = 200)]
-    go_landing_salary: Money,
+    #[arg(long)]
+    go_landing_salary: Option<Money>,
 
     #[arg(long)]
-    free_parking_jackpot: bool,
+    free_parking_jackpot: Option<bool>,
+
+    #[arg(long, value_enum, default_value_t = RulesetKind::Official)]
+    ruleset_name: RulesetKind,
+
+    #[arg(long)]
+    tune: bool,
+
+    #[arg(long, default_value_t = 3)]
+    tune_rounds: u32,
+
+    #[arg(long, default_value_t = 1)]
+    tune_generations: u32,
 
     #[arg(long, value_delimiter = ',', default_value = "greedy")]
     strategies: Vec<StrategyKind>,
@@ -73,6 +91,28 @@ fn main() -> Result<()> {
         cash_reserve: arguments.cash_reserve,
         strategy_kinds: arguments.strategies.clone(),
     };
+
+    if arguments.tune {
+        let tournament_config = TournamentConfig {
+            game_count: arguments.game_count,
+            max_turn_count: arguments.max_turn_count,
+            seed: arguments.seed,
+            player_count: arguments.player_count,
+        };
+
+        let reports = tune_strategy_over_generations(&ruleset, &tournament_config, arguments.tune_rounds, arguments.tune_generations)?;
+        if arguments.json {
+            println!("{}", serde_json::to_string_pretty(&reports)?);
+        } else {
+            for (generation_index, report) in reports.iter().enumerate() {
+                println!("=== generation {generation_index}");
+                print_tuning_report(report);
+                println!();
+            }
+        }
+
+        return Ok(());
+    }
 
     if arguments.print_ruleset {
         println!("{}", serde_json::to_string_pretty(&ruleset)?);
@@ -102,16 +142,34 @@ fn load_ruleset(arguments: &CliArguments) -> Result<Ruleset> {
 }
 
 fn build_ruleset(arguments: &CliArguments) -> Ruleset {
-    let free_parking_jackpot_mode = if arguments.free_parking_jackpot {
-        FreeParkingJackpotMode::TaxesAndFees
-    } else {
-        FreeParkingJackpotMode::Disabled
-    };
+    let mut ruleset = arguments.ruleset_name.to_ruleset();
 
-    Ruleset::builder()
-        .with_go_landing_salary(arguments.go_landing_salary)
-        .with_free_parking_jackpot_mode(free_parking_jackpot_mode)
-        .build()
+    if let Some(go_landing_salary) = arguments.go_landing_salary {
+        ruleset.go_landing_salary = go_landing_salary;
+    }
+
+    if let Some(free_parking_jackpot) = arguments.free_parking_jackpot {
+        ruleset.free_parking_jackpot_mode = if free_parking_jackpot {
+            FreeParkingJackpotMode::TaxesAndFees
+        } else {
+            FreeParkingJackpotMode::Disabled
+        };
+    }
+
+    ruleset
+}
+
+fn print_tuning_report(report: &TuningReport) {
+    println!("baseline win rate   {:.2}%", report.baseline_win_rate * 100.0);
+    println!("tuned win rate      {:.2}%", report.best_win_rate * 100.0);
+    println!("games evaluated     {}", report.evaluated_game_count);
+    println!();
+    println!("{:#?}", report.best_strategy);
+    println!();
+
+    for step in report.steps.iter().filter(|step| step.is_improvement) {
+        println!("improved {:<26} -> {:<5} win {:.2}%  decisive {:.1}%", step.parameter_name, step.value, step.win_rate * 100.0, step.decisive_game_ratio * 100.0);
+    }
 }
 
 fn print_summary(
