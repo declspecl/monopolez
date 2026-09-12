@@ -1,3 +1,8 @@
 pub mod board;
+pub mod card;
+pub mod engine;
+pub mod rng;
 pub mod ruleset;
+pub mod state;
+pub mod strategy;
 pub mod tile;
