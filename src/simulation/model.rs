@@ -27,7 +27,7 @@ impl RulesetKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize)]
 pub enum StrategyKind {
     Greedy,
     Cautious,
@@ -45,7 +45,7 @@ impl StrategyKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct SimulationConfig {
     pub game_count: u32,
     pub max_turn_count: u32,

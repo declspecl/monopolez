@@ -40,3 +40,39 @@ fn tuning_with_sweep_emits_one_document_including_validation() {
     assert!(!output["sweep"].as_array().unwrap().is_empty());
     assert_eq!(output["starting_pool"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn simulation_records_strategy_order_and_rule_overrides() {
+    let output = run_json(&["--json", "--game-count", "4", "--strategies", "cautious,greedy", "--go-landing-salary", "450"]);
+    assert_eq!(output["ruleset"]["go_landing_salary"], 450);
+    assert_eq!(output["config"]["strategy_kinds"], serde_json::json!(["Cautious", "Greedy"]));
+    assert_eq!(output["player_count"], 4);
+    assert_eq!(output["summary"]["game_count"], 4);
+}
+
+#[test]
+fn pool_tournament_records_candidate_and_opponents() {
+    let output = run_json(&[
+        "--vs-pool",
+        "--json",
+        "--game-count",
+        "4",
+        "--strategy-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/dex-optimal.json"),
+    ]);
+    assert_eq!(output["candidate"]["trade_offer_percent"], 400);
+    assert_eq!(output["opponent_pool"][0]["trade_offer_percent"], 150);
+    assert_eq!(output["result"]["game_count"], 4);
+}
+
+#[test]
+fn head_to_head_json_records_each_player_count() {
+    let output = run_json(&["--head-to-head", "--json", "--game-count", "4", "--seed", "19"]);
+    let entries = output["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 7);
+    for (index, entry) in entries.iter().enumerate() {
+        assert_eq!(entry["config"]["player_count"], index + 2);
+        assert_eq!(entry["config"]["seed"], 19);
+        assert_eq!(entry["result"]["game_count"], 4);
+    }
+}

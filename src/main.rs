@@ -173,7 +173,13 @@ fn main() -> Result<()> {
 
         let result = run_pool_tournament(&ruleset, candidate, &opponent_pool, &tournament_config)?;
         if arguments.json {
-            println!("{}", serde_json::to_string(&result)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1, "ruleset": ruleset, "config": tournament_config,
+                    "candidate": candidate, "opponent_pool": opponent_pool, "result": result
+                }))?
+            );
         } else {
             println!(
                 "win {:.2}%  decisive {:.1}%  turns {:.0}",
@@ -199,7 +205,13 @@ fn main() -> Result<()> {
 
         let entries = run_league(&ruleset, &strategies, &tournament_config)?;
         if arguments.json {
-            println!("{}", serde_json::to_string_pretty(&entries)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1, "ruleset": ruleset, "config": tournament_config,
+                    "opponent_pool": strategies, "entries": entries
+                }))?
+            );
 
             return Ok(());
         }
@@ -231,9 +243,12 @@ fn main() -> Result<()> {
         let candidate = load_candidate_strategy(&arguments)?;
         let baseline = ConfigurableStrategy::new();
 
-        println!("{candidate:#?}");
-        println!();
-        println!("players  win rate  decisive  avg turns");
+        if !arguments.json {
+            println!("{candidate:#?}");
+            println!();
+            println!("players  win rate  decisive  avg turns");
+        }
+        let mut entries = Vec::new();
 
         for player_count in 2..=8 {
             let tournament_config = TournamentConfig {
@@ -244,6 +259,10 @@ fn main() -> Result<()> {
             };
 
             let result = run_tournament(&ruleset, candidate, baseline, &tournament_config)?;
+            if arguments.json {
+                entries.push(serde_json::json!({"config": tournament_config, "result": result}));
+                continue;
+            }
             let fair_share = 100.0 / player_count as f64;
 
             println!(
@@ -254,6 +273,15 @@ fn main() -> Result<()> {
             );
         }
 
+        if arguments.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1, "ruleset": ruleset, "candidate": candidate,
+                    "baseline": baseline, "entries": entries
+                }))?
+            );
+        }
         return Ok(());
     }
 
@@ -324,7 +352,13 @@ fn main() -> Result<()> {
     let summary = run_simulation(&ruleset, &config, arguments.player_count)?;
 
     if arguments.json {
-        println!("{}", serde_json::to_string_pretty(&summary)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1, "ruleset": ruleset, "config": config,
+                "player_count": arguments.player_count, "summary": summary
+            }))?
+        );
     } else {
         print_summary(&summary, &arguments.strategies);
     }
