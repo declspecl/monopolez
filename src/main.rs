@@ -92,6 +92,9 @@ struct CliArguments {
     #[arg(long, requires = "grid_file")]
     grid_count: Option<u64>,
 
+    #[arg(long, help = "Branch the zero-based management decision with legal asset actions; diagnostic exact hidden-state rollouts", conflicts_with_all = ["grid_file", "trace", "replay_file", "analyze", "tune", "sweep", "head_to_head", "vs_pool", "print_ruleset", "strategies", "tune_pool_file", "tune_rounds", "tune_generations", "cash_reserve", "game_count"])]
+    branch_management_at: Option<u64>,
+
     #[arg(long)]
     strategy_file: Option<PathBuf>,
 
@@ -158,6 +161,28 @@ fn main() -> Result<()> {
     }
 
     let ruleset = load_ruleset(&arguments)?;
+    if let Some(decision_index) = arguments.branch_management_at {
+        anyhow::ensure!((2..=8).contains(&arguments.player_count), "branching requires 2 to 8 players");
+        let policies = if arguments.league_file.is_some() {
+            anyhow::ensure!(arguments.strategy_file.is_none(), "branching accepts either a strategy file or a league file");
+            let policies = load_strategy_pool(&arguments)?;
+            anyhow::ensure!(policies.len() == arguments.player_count, "branching league must contain exactly player-count strategies");
+            policies
+        } else {
+            vec![load_candidate_strategy(&arguments)?; arguments.player_count]
+        };
+        let report = simulation::branching::branch_management(&ruleset, &policies, arguments.seed, arguments.max_turn_count, decision_index)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": 1, "build": BuildProvenance::current(), "mode": "diagnostic_exact_hidden_state",
+                "ruleset": ruleset, "strategies": policies, "seed": arguments.seed,
+                "max_turn_count": arguments.max_turn_count, "turn_limit_scope": "total_game_turns_including_prefix",
+                "decision_index_scope": "management_decisions_with_at_least_one_legal_asset_action", "report": report
+            }))?
+        );
+        return Ok(());
+    }
     if let Some(path) = &arguments.grid_file {
         let input = fs::read_to_string(path).with_context(|| format!("failed to read grid {}", path.display()))?;
         let axes: simulation::grid::StrategyAxes = serde_json::from_str(&input).context("failed to parse strategy grid")?;

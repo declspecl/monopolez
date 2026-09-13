@@ -189,7 +189,7 @@ fn valid_response(
     }
 }
 
-fn snapshot<const N: usize>(state: &GameState<N>) -> Value {
+pub(crate) fn snapshot<const N: usize>(state: &GameState<N>) -> Value {
     json!({
         "cash": state.cash_by_player_id.as_slice(),
         "positions": state.position_by_player_id.as_slice(),

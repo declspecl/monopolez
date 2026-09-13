@@ -168,6 +168,38 @@ fn grid_cli_requires_an_explicit_valid_range() {
 }
 
 #[test]
+fn branching_cli_reports_legal_alternatives_and_diagnostic_scope() {
+    let output = run_json(&[
+        "--branch-management-at",
+        "0",
+        "--ruleset-name",
+        "dex",
+        "--seed",
+        "3",
+        "--max-turn-count",
+        "1000",
+        "--strategy-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/dex-optimal.json"),
+        "--json",
+    ]);
+    assert_eq!(output["mode"], "diagnostic_exact_hidden_state");
+    assert_eq!(output["turn_limit_scope"], "total_game_turns_including_prefix");
+    assert_eq!(output["report"]["decision_index"], 0);
+    let branches = output["report"]["branches"].as_array().unwrap();
+    assert!(branches.len() >= 2);
+    assert!(branches[0]["action"].is_null());
+    for branch in branches {
+        assert!(branch["completed_turn_count"].as_u64().unwrap() <= 1000);
+        assert!(branch["final_state"].is_object());
+    }
+    let rejected = Command::new(env!("CARGO_BIN_EXE_monopolez"))
+        .args(["--branch-management-at", "0", "--game-count", "2"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+}
+
+#[test]
 fn trace_rejects_batch_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
     assert!(!output.status.success());
