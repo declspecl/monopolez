@@ -235,6 +235,7 @@ fn main() -> Result<()> {
                 result.calculate_decisive_game_ratio() * 100.0,
                 result.calculate_average_turn_count()
             );
+            print_win_rate_interval("candidate", &result);
         }
 
         return Ok(());
@@ -320,6 +321,7 @@ fn main() -> Result<()> {
                 result.calculate_decisive_game_ratio() * 100.0,
                 result.calculate_average_turn_count()
             );
+            print_win_rate_interval("candidate", &result);
         }
 
         if arguments.json {
@@ -376,6 +378,9 @@ fn main() -> Result<()> {
                 session.validation.baseline.calculate_candidate_win_rate() * 100.0,
                 session.validation.champion.calculate_candidate_win_rate() * 100.0
             );
+            print_win_rate_interval("held-out baseline", &session.validation.baseline);
+            print_win_rate_interval("held-out champion", &session.validation.champion);
+            println!("marginal intervals do not test the paired champion-minus-baseline difference");
         }
 
         if let Some(steps) = sweep {
@@ -535,6 +540,21 @@ fn build_ruleset(arguments: &CliArguments) -> Ruleset {
     }
 
     ruleset
+}
+
+fn print_win_rate_interval(
+    label: &str,
+    result: &simulation::tournament::TournamentResult,
+) {
+    match result.calculate_candidate_win_rate_interval() {
+        Some(interval) => println!(
+            "{label} approximate 95% Wilson interval [{:.2}%, {:.2}%]  n={} including unfinished games",
+            interval.lower * 100.0,
+            interval.upper * 100.0,
+            interval.sample_count
+        ),
+        None => println!("{label} win-rate interval unavailable"),
+    }
 }
 
 fn print_tuning_report(report: &TuningReport) {

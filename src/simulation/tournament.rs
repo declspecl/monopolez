@@ -4,6 +4,7 @@ use anyhow::{
 };
 use rayon::prelude::*;
 use serde::Serialize;
+use serde::ser::SerializeStruct;
 
 use crate::game::engine::turn::{
     GameOutcome,
@@ -21,7 +22,7 @@ pub struct TournamentConfig {
     pub player_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TournamentResult {
     pub game_count: u32,
     pub candidate_win_count: u32,
@@ -29,7 +30,52 @@ pub struct TournamentResult {
     pub total_turn_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct WinRateInterval {
+    pub method: &'static str,
+    pub confidence_level: f64,
+    pub sample_count: u32,
+    pub lower: f64,
+    pub upper: f64,
+}
+
+impl Serialize for TournamentResult {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut result = serializer.serialize_struct("TournamentResult", 5)?;
+        result.serialize_field("game_count", &self.game_count)?;
+        result.serialize_field("candidate_win_count", &self.candidate_win_count)?;
+        result.serialize_field("decisive_game_count", &self.decisive_game_count)?;
+        result.serialize_field("total_turn_count", &self.total_turn_count)?;
+        result.serialize_field("candidate_win_rate_interval", &self.calculate_candidate_win_rate_interval())?;
+        result.end()
+    }
+}
+
 impl TournamentResult {
+    pub fn calculate_candidate_win_rate_interval(&self) -> Option<WinRateInterval> {
+        // two-sided 95% normal critical value
+        const Z: f64 = 1.959963984540054;
+        if self.game_count == 0 || self.candidate_win_count > self.game_count {
+            return None;
+        }
+        let sample_count = self.game_count as f64;
+        let win_rate = self.calculate_candidate_win_rate();
+        let adjustment = Z * Z / sample_count;
+        let denominator = 1.0 + adjustment;
+        let center = (win_rate + adjustment / 2.0) / denominator;
+        let radius = Z * ((win_rate * (1.0 - win_rate) + adjustment / 4.0) / sample_count).sqrt() / denominator;
+        Some(WinRateInterval {
+            method: "wilson_binomial_approximation",
+            confidence_level: 0.95,
+            sample_count: self.game_count,
+            lower: (center - radius).max(0.0),
+            upper: (center + radius).min(1.0),
+        })
+    }
+
     pub const fn empty() -> Self {
         Self {
             game_count: 0,
@@ -146,6 +192,59 @@ fn play_tournament<const PLAYER_COUNT: usize>(
 mod tests {
     use super::*;
     use crate::game::ruleset::data::DEX_RULESET;
+
+    #[test]
+    fn win_rate_interval_matches_reference_values() {
+        for (wins, lower, upper) in [(0, 0.0, 0.0369934982), (50, 0.4038315304, 0.5961684696), (100, 0.9630065018, 1.0)] {
+            let result = TournamentResult {
+                game_count: 100,
+                candidate_win_count: wins,
+                ..TournamentResult::empty()
+            };
+            let interval = result.calculate_candidate_win_rate_interval().unwrap();
+            assert!((interval.lower - lower).abs() < 1e-9);
+            assert!((interval.upper - upper).abs() < 1e-9);
+            assert_eq!(interval.sample_count, 100);
+        }
+    }
+
+    #[test]
+    fn win_rate_interval_handles_empty_single_and_large_samples() {
+        assert_eq!(TournamentResult::empty().calculate_candidate_win_rate_interval(), None);
+        for game_count in [1, 10, 100, u32::MAX] {
+            for wins in [0, game_count / 2, game_count] {
+                let result = TournamentResult {
+                    game_count,
+                    candidate_win_count: wins,
+                    ..TournamentResult::empty()
+                };
+                let interval = result.calculate_candidate_win_rate_interval().unwrap();
+                assert!(interval.lower.is_finite() && interval.upper.is_finite());
+                assert!(interval.lower >= 0.0 && interval.upper <= 1.0);
+                assert!(interval.lower <= result.calculate_candidate_win_rate() + 1e-15);
+                assert!(interval.upper >= result.calculate_candidate_win_rate() - 1e-15);
+            }
+        }
+    }
+
+    #[test]
+    fn interval_includes_unfinished_games_and_is_computed_after_combining() {
+        let first = TournamentResult {
+            game_count: 10,
+            candidate_win_count: 2,
+            decisive_game_count: 4,
+            total_turn_count: 100,
+        };
+        let combined = first.combine(first);
+        let interval = combined.calculate_candidate_win_rate_interval().unwrap();
+        assert_eq!(interval.sample_count, 20);
+        assert_eq!(combined.calculate_candidate_win_rate(), 0.2);
+        let smaller = first.calculate_candidate_win_rate_interval().unwrap();
+        assert!(interval.upper - interval.lower < smaller.upper - smaller.lower);
+        let json = serde_json::to_value(combined).unwrap();
+        assert_eq!(json["candidate_win_rate_interval"], serde_json::to_value(interval).unwrap());
+        assert!(serde_json::to_value(TournamentResult::empty()).unwrap()["candidate_win_rate_interval"].is_null());
+    }
 
     fn create_config(game_count: u32) -> TournamentConfig {
         TournamentConfig {

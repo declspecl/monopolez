@@ -41,6 +41,13 @@ fn tuning_with_sweep_emits_one_document_including_validation() {
     assert_eq!(output["validation"]["config"]["seed"], 21);
     assert_eq!(output["validation"]["baseline"]["game_count"], 4);
     assert_eq!(output["validation"]["champion"]["game_count"], 4);
+    for candidate in ["baseline", "champion"] {
+        let interval = &output["validation"][candidate]["candidate_win_rate_interval"];
+        assert_eq!(interval["sample_count"], 4);
+        assert_eq!(interval["method"], "wilson_binomial_approximation");
+        assert_eq!(interval["confidence_level"], 0.95);
+        assert!(interval["upper"].as_f64().unwrap() > 0.0);
+    }
     assert!(!output["sweep"].as_array().unwrap().is_empty());
     assert_eq!(output["starting_pool"].as_array().unwrap().len(), 1);
 }
@@ -67,6 +74,19 @@ fn pool_tournament_records_candidate_and_opponents() {
     assert_eq!(output["candidate"]["trade_offer_percent"], 400);
     assert_eq!(output["opponent_pool"][0]["trade_offer_percent"], 150);
     assert_eq!(output["result"]["game_count"], 4);
+    assert_eq!(output["result"]["candidate_win_rate_interval"]["sample_count"], 4);
+}
+
+#[test]
+fn pool_tournament_prints_interval_and_sample_semantics() {
+    let output = Command::new(env!("CARGO_BIN_EXE_monopolez"))
+        .args(["--vs-pool", "--game-count", "4", "--max-turn-count", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("approximate 95% Wilson interval"));
+    assert!(text.contains("n=4 including unfinished games"));
 }
 
 #[test]
@@ -78,6 +98,7 @@ fn head_to_head_json_records_each_player_count() {
         assert_eq!(entry["config"]["player_count"], index + 2);
         assert_eq!(entry["config"]["seed"], 19);
         assert_eq!(entry["result"]["game_count"], 4);
+        assert_eq!(entry["result"]["candidate_win_rate_interval"]["sample_count"], 4);
     }
 }
 
