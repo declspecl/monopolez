@@ -83,6 +83,15 @@ struct CliArguments {
     #[arg(long)]
     sweep: bool,
 
+    #[arg(long, requires = "grid_count", help = "JSON object mapping strategy fields to arrays of values; league-file supplies opponents", conflicts_with_all = ["trace", "replay_file", "analyze", "tune", "sweep", "head_to_head", "vs_pool", "print_ruleset", "strategies", "tune_pool_file", "tune_rounds", "tune_generations", "cash_reserve"])]
+    grid_file: Option<PathBuf>,
+
+    #[arg(long, requires = "grid_file", default_value_t = 0)]
+    grid_start: u64,
+
+    #[arg(long, requires = "grid_file")]
+    grid_count: Option<u64>,
+
     #[arg(long)]
     strategy_file: Option<PathBuf>,
 
@@ -149,6 +158,50 @@ fn main() -> Result<()> {
     }
 
     let ruleset = load_ruleset(&arguments)?;
+    if let Some(path) = &arguments.grid_file {
+        let input = fs::read_to_string(path).with_context(|| format!("failed to read grid {}", path.display()))?;
+        let axes: simulation::grid::StrategyAxes = serde_json::from_str(&input).context("failed to parse strategy grid")?;
+        let baseline = load_candidate_strategy(&arguments)?;
+        let opponents = load_strategy_pool(&arguments)?;
+        let grid = simulation::grid::StrategyGrid::new(baseline, axes.clone())?;
+        let config = TournamentConfig {
+            game_count: arguments.game_count,
+            max_turn_count: arguments.max_turn_count,
+            seed: arguments.seed,
+            player_count: arguments.player_count,
+        };
+        let count = arguments.grid_count.context("grid requires an explicit configuration count")?;
+        let entries = grid.run_range(&ruleset, &opponents, &config, arguments.grid_start, count)?;
+        if arguments.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": 1, "purpose": "configuration_screening", "build": BuildProvenance::current(),
+                    "ruleset": ruleset, "config": config, "baseline": baseline, "opponent_pool": opponents,
+                    "axes": axes, "configuration_count": grid.configuration_count(),
+                    "configuration_id_order": "axis_names_ascending_last_axis_changes_fastest",
+                    "range_start": arguments.grid_start, "range_count": count, "entries": entries
+                }))?
+            );
+        } else {
+            println!(
+                "{} of {} configurations, starting at {} (screening, not held-out evaluation)",
+                count,
+                grid.configuration_count(),
+                arguments.grid_start
+            );
+            for entry in entries {
+                println!(
+                    "configuration {}  win {:.2}%  {:?}",
+                    entry.configuration_id,
+                    entry.result.calculate_candidate_win_rate() * 100.0,
+                    entry.strategy
+                );
+                print_win_rate_interval("candidate", &entry.result);
+            }
+        }
+        return Ok(());
+    }
     if arguments.trace {
         let strategies = if arguments.league_file.is_some() {
             anyhow::ensure!(arguments.strategy_file.is_none(), "trace accepts either a strategy file or a league file");

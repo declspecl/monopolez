@@ -125,6 +125,49 @@ fn trace_round_trips_through_replay_cli() {
 }
 
 #[test]
+fn grid_cli_records_the_requested_configuration_range() {
+    let output = run_json(&[
+        "--grid-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/building-grid.json"),
+        "--grid-start",
+        "2",
+        "--grid-count",
+        "3",
+        "--game-count",
+        "4",
+        "--max-turn-count",
+        "10",
+        "--strategy-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/dex-optimal.json"),
+        "--json",
+    ]);
+    assert_eq!(output["purpose"], "configuration_screening");
+    assert_eq!(output["configuration_count"], 6);
+    assert_eq!(output["range_start"], 2);
+    assert_eq!(output["range_count"], 3);
+    let entries = output["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    for (offset, entry) in entries.iter().enumerate() {
+        assert_eq!(entry["configuration_id"], offset + 2);
+        assert_eq!(entry["strategy"]["trade_offer_percent"], 400);
+        assert_eq!(entry["result"]["game_count"], 4);
+    }
+    assert_eq!(entries[0]["strategy"]["building_allocation"], "Spread");
+    assert_eq!(entries[0]["strategy"]["development_ceiling"], "Hotel");
+    assert_eq!(entries[1]["strategy"]["building_allocation"], "Concentrate");
+    assert_eq!(entries[1]["strategy"]["development_ceiling"], "ThreeHouses");
+}
+
+#[test]
+fn grid_cli_requires_an_explicit_valid_range() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/building-grid.json");
+    for arguments in [vec!["--grid-file", path], vec!["--grid-file", path, "--grid-count", "7"], vec!["--grid-count", "1"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(arguments).output().unwrap();
+        assert!(!output.status.success());
+    }
+}
+
+#[test]
 fn trace_rejects_batch_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
     assert!(!output.status.success());

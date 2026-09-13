@@ -1,0 +1,4 @@
+{
+  "building_allocation": ["Spread", "Concentrate"],
+  "development_ceiling": ["ThreeHouses", "FourHouses", "Hotel"]
+}

@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod grid;
 pub mod model;
 pub mod provenance;
 pub mod runner;
