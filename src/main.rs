@@ -92,6 +92,9 @@ struct CliArguments {
     #[arg(long, requires = "grid_file")]
     grid_count: Option<u64>,
 
+    #[arg(long, requires = "grid_file", help = "Save completed grid configurations and resume matching runs from this journal")]
+    grid_checkpoint: Option<PathBuf>,
+
     #[arg(long, help = "Branch the zero-based management decision with legal asset actions; diagnostic exact hidden-state rollouts", conflicts_with_all = ["grid_file", "trace", "replay_file", "analyze", "tune", "sweep", "head_to_head", "vs_pool", "print_ruleset", "strategies", "tune_pool_file", "tune_rounds", "tune_generations", "cash_reserve", "game_count"])]
     branch_management_at: Option<u64>,
 
@@ -208,7 +211,47 @@ fn main() -> Result<()> {
             player_count: arguments.player_count,
         };
         let count = arguments.grid_count.context("grid requires an explicit configuration count")?;
-        let entries = grid.run_range(&ruleset, &opponents, &config, arguments.grid_start, count)?;
+        grid.validate_range(&config, arguments.grid_start, count)?;
+        anyhow::ensure!(!opponents.is_empty(), "opponent pool must not be empty");
+        let entries = if let Some(path) = &arguments.grid_checkpoint {
+            let header = serde_json::json!({
+                "checkpoint_schema_version": 1, "executable_fingerprint": simulation::checkpoint::executable_fingerprint()?,
+                "build": BuildProvenance::current(), "ruleset": ruleset, "config": config, "baseline": baseline,
+                "opponent_pool": opponents, "axes": axes, "range_start": arguments.grid_start, "range_count": count
+            });
+            let mut checkpoint = simulation::checkpoint::Checkpoint::open(path, &header)?;
+            anyhow::ensure!(checkpoint.entries.len() as u64 <= count, "checkpoint contains too many entries");
+            let mut entries = Vec::new();
+            for (offset, value) in checkpoint.entries.iter().enumerate() {
+                let entry: simulation::grid::GridEntry = serde_json::from_value(value.clone()).context("invalid checkpoint entry")?;
+                let id = arguments.grid_start + offset as u64;
+                anyhow::ensure!(entry.configuration_id == id && entry.strategy == grid.strategy_at(id)?, "checkpoint configuration differs from grid");
+                anyhow::ensure!(
+                    entry.result.game_count == config.game_count && entry.result.candidate_win_count <= entry.result.decisive_game_count && entry.result.decisive_game_count <= config.game_count,
+                    "invalid checkpoint game counts"
+                );
+                anyhow::ensure!(
+                    entry.result.total_turn_count <= config.game_count as u64 * config.max_turn_count as u64,
+                    "invalid checkpoint turn count"
+                );
+                anyhow::ensure!(serde_json::to_value(&entry)? == *value, "checkpoint result fields are inconsistent");
+                entries.push(entry);
+            }
+            if checkpoint.discarded_tail_bytes > 0 {
+                let discarded = checkpoint.discarded_tail_bytes;
+                checkpoint.recover_tail()?;
+                eprintln!("discarded {} bytes from an incomplete checkpoint tail; that configuration will be recomputed", discarded);
+            }
+            eprintln!("resuming {} of {count} completed configurations", entries.len());
+            for id in arguments.grid_start + entries.len() as u64..arguments.grid_start + count {
+                let entry = grid.run_range(&ruleset, &opponents, &config, id, 1)?.pop().expect("one grid configuration requested");
+                checkpoint.append(&serde_json::to_value(&entry)?)?;
+                entries.push(entry);
+            }
+            entries
+        } else {
+            grid.run_range(&ruleset, &opponents, &config, arguments.grid_start, count)?
+        };
         if arguments.json {
             println!(
                 "{}",

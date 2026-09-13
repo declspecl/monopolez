@@ -24,7 +24,7 @@ pub struct StrategyGrid {
     configuration_count: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, serde::Deserialize)]
 pub struct GridEntry {
     pub configuration_id: u64,
     pub strategy: ConfigurableStrategy,
@@ -78,17 +78,28 @@ impl StrategyGrid {
         start: u64,
         count: u64,
     ) -> Result<Vec<GridEntry>> {
-        ensure!(count > 0, "grid configuration count must be positive");
-        let end = start.checked_add(count).context("grid range overflows u64")?;
-        ensure!(end <= self.configuration_count, "grid range exceeds {} configurations", self.configuration_count);
-        ensure!(config.game_count > 0 && config.max_turn_count > 0, "grid requires positive game and turn counts");
-        (start..end)
+        self.validate_range(config, start, count)?;
+        (start..start + count)
             .map(|configuration_id| {
                 let strategy = self.strategy_at(configuration_id)?;
                 let result = run_pool_tournament(rules, strategy, opponents, config)?;
                 Ok(GridEntry { configuration_id, strategy, result })
             })
             .collect()
+    }
+
+    pub fn validate_range(
+        &self,
+        config: &TournamentConfig,
+        start: u64,
+        count: u64,
+    ) -> Result<()> {
+        ensure!(count > 0, "grid configuration count must be positive");
+        let end = start.checked_add(count).context("grid range overflows u64")?;
+        ensure!(end <= self.configuration_count, "grid range exceeds {} configurations", self.configuration_count);
+        ensure!(config.game_count > 0 && config.max_turn_count > 0, "grid requires positive game and turn counts");
+        ensure!((2..=8).contains(&config.player_count), "grid requires 2 to 8 players");
+        Ok(())
     }
 }
 

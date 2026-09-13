@@ -22,7 +22,7 @@ pub struct TournamentConfig {
     pub player_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct TournamentResult {
     pub game_count: u32,
     pub candidate_win_count: u32,

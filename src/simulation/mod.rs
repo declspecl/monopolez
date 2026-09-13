@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod branching;
+pub mod checkpoint;
 pub mod grid;
 pub mod model;
 pub mod provenance;

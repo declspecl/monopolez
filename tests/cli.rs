@@ -221,6 +221,59 @@ fn jail_branching_cli_uses_separate_decision_indices() {
 }
 
 #[test]
+fn grid_checkpoint_resumes_and_recovers_an_interrupted_tail() {
+    let path = std::env::temp_dir().join(format!("monopolez-grid-checkpoint-{}.jsonl", std::process::id()));
+    assert!(!path.exists());
+    let args = [
+        "--grid-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/building-grid.json"),
+        "--grid-count",
+        "6",
+        "--game-count",
+        "4",
+        "--max-turn-count",
+        "10",
+        "--json",
+        "--grid-checkpoint",
+        path.to_str().unwrap(),
+    ];
+    let original_report = run_json(&args);
+    let original_bytes = std::fs::read(&path).unwrap();
+    assert_eq!(original_bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).count(), 7);
+    assert_eq!(run_json(&args), original_report);
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    let mut interrupted = original_bytes.split_inclusive(|byte| *byte == b'\n').take(2).flatten().copied().collect::<Vec<_>>();
+    interrupted.extend_from_slice(b"{\"configuration_id\":");
+    std::fs::write(&path, interrupted).unwrap();
+    assert_eq!(run_json(&args), original_report);
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    let mismatched = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(args).args(["--seed", "17"]).output().unwrap();
+    assert!(!mismatched.status.success());
+    assert!(String::from_utf8_lossy(&mismatched.stderr).contains("checkpoint inputs or executable differ"));
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    let mut records: Vec<serde_json::Value> = original_bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect();
+    records[1]["configuration_id"] = serde_json::json!(5);
+    let mut corrupt = records
+        .iter()
+        .flat_map(|record| {
+            let mut bytes = serde_json::to_vec(record).unwrap();
+            bytes.push(b'\n');
+            bytes
+        })
+        .collect::<Vec<_>>();
+    corrupt.extend_from_slice(b"{unfinished");
+    std::fs::write(&path, &corrupt).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(args).output().unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn trace_rejects_batch_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
     assert!(!output.status.success());
