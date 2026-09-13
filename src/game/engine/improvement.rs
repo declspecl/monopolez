@@ -50,7 +50,7 @@ pub fn can_improve_property<const PLAYER_COUNT: usize>(
     property_id: PropertyId,
 ) -> bool {
     let property_index = property_id as usize;
-    if property_index >= PROPERTY_COUNT {
+    if property_index >= PROPERTY_COUNT || player_id as usize >= PLAYER_COUNT || game_state.bankrupt_players & (1 << player_id) != 0 {
         return false;
     }
 
@@ -304,5 +304,20 @@ mod tests {
             assert_eq!(state.board.bank_hotel_count, BANK_STARTING_HOTEL_COUNT);
             assert_eq!(state.board.bank_house_count, 0);
         }
+    }
+
+    #[test]
+    fn rejects_invalid_building_actions_without_mutation() {
+        let ruleset = Ruleset::default();
+        let mut state = create_dark_blue_owner_state(&ruleset);
+        let original = state;
+        for (player, property) in [(255, 20), (0, 255), (1, 20)] {
+            assert!(!improve_property(&mut state, &ruleset, player, property));
+            assert_eq!(state, original);
+        }
+        state.bankrupt_players |= 1;
+        let original = state;
+        assert!(!improve_property(&mut state, &ruleset, 0, 20));
+        assert_eq!(state, original);
     }
 }

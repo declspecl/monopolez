@@ -34,11 +34,17 @@ pub fn can_mortgage_tile<const PLAYER_COUNT: usize>(
     player_id: PlayerId,
     tile_id: TileId,
 ) -> bool {
+    if player_id as usize >= PLAYER_COUNT || tile_id as usize >= crate::game::tile::data::TILE_COUNT || game_state.bankrupt_players & (1 << player_id) != 0 {
+        return false;
+    }
     if game_state.board.get_tile_owner(tile_id) != Some(player_id) || game_state.board.is_tile_mortgaged(tile_id) {
         return false;
     }
 
     !has_group_improvements(game_state, tile_id)
+        && game_state.cash_by_player_id[player_id as usize]
+            .checked_add(MORTGAGE_VALUE_BY_TILE_ID[tile_id as usize] as Cash)
+            .is_some()
 }
 
 pub fn mortgage_tile<const PLAYER_COUNT: usize>(
@@ -61,6 +67,9 @@ pub fn can_unmortgage_tile<const PLAYER_COUNT: usize>(
     player_id: PlayerId,
     tile_id: TileId,
 ) -> bool {
+    if player_id as usize >= PLAYER_COUNT || tile_id as usize >= crate::game::tile::data::TILE_COUNT || game_state.bankrupt_players & (1 << player_id) != 0 {
+        return false;
+    }
     if game_state.board.get_tile_owner(tile_id) != Some(player_id) || !game_state.board.is_tile_mortgaged(tile_id) {
         return false;
     }
@@ -129,6 +138,21 @@ mod tests {
 
     const PARK_PLACE_TILE_ID: TileId = 37;
     const BOARDWALK_TILE_ID: TileId = 39;
+
+    #[test]
+    fn invalid_mortgage_actions_leave_state_unchanged() {
+        let mut state = create_dark_blue_owner_state(&Ruleset::default());
+        let original = state;
+        for (player, tile) in [(255, 39), (0, 255), (1, 39), (0, 0)] {
+            assert!(!mortgage_tile(&mut state, player, tile));
+            assert!(!unmortgage_tile(&mut state, player, tile));
+            assert_eq!(state, original);
+        }
+        state.cash_by_player_id[0] = Cash::MAX;
+        let original = state;
+        assert!(!mortgage_tile(&mut state, 0, 39));
+        assert_eq!(state, original);
+    }
 
     fn create_dark_blue_owner_state(ruleset: &Ruleset) -> GameState<2> {
         let mut game_state = GameState::<2>::create_starting_state(ruleset, 1);
