@@ -95,6 +95,9 @@ struct CliArguments {
     #[arg(long, help = "Branch the zero-based management decision with legal asset actions; diagnostic exact hidden-state rollouts", conflicts_with_all = ["grid_file", "trace", "replay_file", "analyze", "tune", "sweep", "head_to_head", "vs_pool", "print_ruleset", "strategies", "tune_pool_file", "tune_rounds", "tune_generations", "cash_reserve", "game_count"])]
     branch_management_at: Option<u64>,
 
+    #[arg(long, help = "Branch the zero-based jail decision using exact hidden state", conflicts_with_all = ["branch_management_at", "grid_file", "trace", "replay_file", "analyze", "tune", "sweep", "head_to_head", "vs_pool", "print_ruleset", "strategies", "tune_pool_file", "tune_rounds", "tune_generations", "cash_reserve", "game_count"])]
+    branch_jail_at: Option<u64>,
+
     #[arg(long)]
     strategy_file: Option<PathBuf>,
 
@@ -161,7 +164,7 @@ fn main() -> Result<()> {
     }
 
     let ruleset = load_ruleset(&arguments)?;
-    if let Some(decision_index) = arguments.branch_management_at {
+    if let Some(decision_index) = arguments.branch_management_at.or(arguments.branch_jail_at) {
         anyhow::ensure!((2..=8).contains(&arguments.player_count), "branching requires 2 to 8 players");
         let policies = if arguments.league_file.is_some() {
             anyhow::ensure!(arguments.strategy_file.is_none(), "branching accepts either a strategy file or a league file");
@@ -171,14 +174,23 @@ fn main() -> Result<()> {
         } else {
             vec![load_candidate_strategy(&arguments)?; arguments.player_count]
         };
-        let report = simulation::branching::branch_management(&ruleset, &policies, arguments.seed, arguments.max_turn_count, decision_index)?;
+        let report = if arguments.branch_jail_at.is_some() {
+            simulation::branching::branch_decision(&ruleset, &policies, arguments.seed, arguments.max_turn_count, decision_index, simulation::branching::BranchKind::Jail)?
+        } else {
+            simulation::branching::branch_management(&ruleset, &policies, arguments.seed, arguments.max_turn_count, decision_index)?
+        };
+        let index_scope = if arguments.branch_jail_at.is_some() {
+            "jail_decisions"
+        } else {
+            "management_decisions_with_at_least_one_legal_asset_action"
+        };
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "schema_version": 1, "build": BuildProvenance::current(), "mode": "diagnostic_exact_hidden_state",
                 "ruleset": ruleset, "strategies": policies, "seed": arguments.seed,
                 "max_turn_count": arguments.max_turn_count, "turn_limit_scope": "total_game_turns_including_prefix",
-                "decision_index_scope": "management_decisions_with_at_least_one_legal_asset_action", "report": report
+                "decision_index_scope": index_scope, "report": report
             }))?
         );
         return Ok(());

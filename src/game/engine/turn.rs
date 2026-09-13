@@ -29,7 +29,10 @@ use crate::game::state::model::{
     GameState,
     PlayerSetMask,
 };
-use crate::game::strategy::model::PlayerStrategy;
+use crate::game::strategy::model::{
+    JailAction,
+    PlayerStrategy,
+};
 use crate::game::tile::model::Cash;
 
 pub const MAX_CONSECUTIVE_DOUBLE_COUNT: u8 = 3;
@@ -151,15 +154,10 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             if game_state.jailed_players & (1 << player_id) == 0 {
                 return TurnPhase::Rolling;
             }
-            match take_jail_turn(game_state, ruleset, strategies, player_id) {
-                JailTurnResult::StayInJail => TurnPhase::End,
-                JailTurnResult::MoveWithoutRollingAgain(dice_roll) => {
-                    move_player_forward(game_state, ruleset, player_id, dice_roll.total());
-                    resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
-                    TurnPhase::End
-                },
-                JailTurnResult::RollNormally => TurnPhase::Rolling,
-            }
+            let action = strategies[player_id as usize].choose_jail_action(game_state, ruleset, player_id);
+            apply_jail_decision(game_state, ruleset, strategies, action)
+                .or_else(|_| apply_jail_decision(game_state, ruleset, strategies, JailAction::RollForDoubles))
+                .unwrap_or(TurnPhase::End)
         },
         TurnPhase::Rolling => {
             let dice_roll = game_state.rng.roll_dice();
@@ -192,7 +190,31 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     }
 }
 
-fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
+pub fn apply_jail_decision<const N: usize, S: PlayerStrategy>(
+    state: &mut GameState<N>,
+    rules: &Ruleset,
+    strategies: &mut [S; N],
+    action: JailAction,
+) -> Result<TurnPhase, ActionError> {
+    let player = state.current_player_id;
+    let resolution = super::action::execute_jail_action(state, rules, strategies, player, action)?;
+    let result = if resolution == super::action::JailResolution::Released {
+        JailTurnResult::RollNormally
+    } else {
+        roll_in_jail(state, rules, strategies, player)
+    };
+    Ok(match result {
+        JailTurnResult::StayInJail => TurnPhase::End,
+        JailTurnResult::RollNormally => TurnPhase::Rolling,
+        JailTurnResult::MoveWithoutRollingAgain(dice_roll) => {
+            move_player_forward(state, rules, player, dice_roll.total());
+            resolve_landing(state, rules, strategies, player, dice_roll, RentModifier::Standard);
+            TurnPhase::End
+        },
+    })
+}
+
+fn roll_in_jail<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     game_state: &mut GameState<PLAYER_COUNT>,
     ruleset: &Ruleset,
     strategies: &mut [Strategy; PLAYER_COUNT],
@@ -200,13 +222,6 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 ) -> JailTurnResult {
     let player_index = player_id as usize;
     let jail_bail_amount = ruleset.jail_bail_amount as Cash;
-
-    let action = strategies[player_index].choose_jail_action(game_state, ruleset, player_id);
-    if super::action::legal_jail_actions(game_state, ruleset, player_id).any(|legal| legal == action)
-        && super::action::execute_jail_action(game_state, ruleset, strategies, player_id, action) == Ok(super::action::JailResolution::Released)
-    {
-        return JailTurnResult::RollNormally;
-    }
 
     let dice_roll = game_state.rng.roll_dice();
     strategies[player_index].record_event(super::event::GameEvent::DiceRolled {

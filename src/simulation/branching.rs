@@ -12,21 +12,45 @@ use crate::game::board::model::PlayerId;
 use crate::game::engine::action::{
     ManagementAction,
     ManagementPhase,
+    legal_jail_actions,
     legal_management_actions,
 };
 use crate::game::engine::turn::{
     TurnPhase,
     advance_turn,
+    apply_jail_decision,
     apply_management_decision,
 };
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
 use crate::game::strategy::configurable::ConfigurableStrategy;
-use crate::game::strategy::model::PlayerStrategy;
+use crate::game::strategy::model::{
+    JailAction,
+    PlayerStrategy,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum BranchAction {
+    Management(Option<ManagementAction>),
+    Jail(JailAction),
+}
+
+impl From<Option<ManagementAction>> for BranchAction {
+    fn from(action: Option<ManagementAction>) -> Self {
+        Self::Management(action)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BranchKind {
+    Management,
+    Jail,
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct BranchOutcome {
-    pub action: Option<ManagementAction>,
+    pub action: BranchAction,
     pub state_after_action: Value,
     pub final_state: Value,
     pub winner: Option<PlayerId>,
@@ -40,7 +64,7 @@ pub struct BranchReport {
     pub phase: &'static str,
     pub player_id: PlayerId,
     pub fork_state: Value,
-    pub baseline_action: Option<ManagementAction>,
+    pub baseline_action: BranchAction,
     pub branches: Vec<BranchOutcome>,
 }
 
@@ -51,15 +75,26 @@ pub fn branch_management(
     max_turn_count: u32,
     decision_index: u64,
 ) -> Result<BranchReport> {
+    branch_decision(rules, policies, seed, max_turn_count, decision_index, BranchKind::Management)
+}
+
+pub fn branch_decision(
+    rules: &Ruleset,
+    policies: &[ConfigurableStrategy],
+    seed: u64,
+    max_turn_count: u32,
+    decision_index: u64,
+    kind: BranchKind,
+) -> Result<BranchReport> {
     ensure!(max_turn_count > 0, "branching requires a positive turn limit");
     match policies.len() {
-        2 => seek::<2>(rules, policies, seed, max_turn_count, decision_index),
-        3 => seek::<3>(rules, policies, seed, max_turn_count, decision_index),
-        4 => seek::<4>(rules, policies, seed, max_turn_count, decision_index),
-        5 => seek::<5>(rules, policies, seed, max_turn_count, decision_index),
-        6 => seek::<6>(rules, policies, seed, max_turn_count, decision_index),
-        7 => seek::<7>(rules, policies, seed, max_turn_count, decision_index),
-        8 => seek::<8>(rules, policies, seed, max_turn_count, decision_index),
+        2 => seek::<2>(rules, policies, seed, max_turn_count, decision_index, kind),
+        3 => seek::<3>(rules, policies, seed, max_turn_count, decision_index, kind),
+        4 => seek::<4>(rules, policies, seed, max_turn_count, decision_index, kind),
+        5 => seek::<5>(rules, policies, seed, max_turn_count, decision_index, kind),
+        6 => seek::<6>(rules, policies, seed, max_turn_count, decision_index, kind),
+        7 => seek::<7>(rules, policies, seed, max_turn_count, decision_index, kind),
+        8 => seek::<8>(rules, policies, seed, max_turn_count, decision_index, kind),
         _ => bail!("branching requires 2 to 8 players"),
     }
 }
@@ -75,6 +110,7 @@ fn seek<const N: usize>(
     seed: u64,
     limit: u32,
     target: u64,
+    kind: BranchKind,
 ) -> Result<BranchReport> {
     let mut state = GameState::<N>::create_starting_state(rules, seed);
     let mut strategies: [ConfigurableStrategy; N] = core::array::from_fn(|index| policies[index]);
@@ -87,7 +123,7 @@ fn seek<const N: usize>(
             TurnPhase::Unmortgaging => Some(ManagementPhase::Unmortgaging),
             _ => None,
         };
-        if let Some(management_phase) = management_phase {
+        if let Some(management_phase) = management_phase.filter(|_| kind == BranchKind::Management) {
             let legal = legal_management_actions(&state, rules, state.current_player_id, management_phase);
             if legal.iter().next().is_some() {
                 if index == target {
@@ -103,12 +139,32 @@ fn seek<const N: usize>(
                         phase: if phase == TurnPhase::Building { "Building" } else { "Unmortgaging" },
                         player_id: state.current_player_id,
                         fork_state: snapshot(&state),
-                        baseline_action,
+                        baseline_action: baseline_action.into(),
                         branches,
                     });
                 }
                 index += 1;
             }
+        }
+        if kind == BranchKind::Jail && phase == TurnPhase::Jail && state.jailed_players & (1 << state.current_player_id) != 0 {
+            if index == target {
+                let baseline_action = strategies[state.current_player_id as usize].choose_jail_action(&state, rules, state.current_player_id);
+                let actions: Vec<_> = legal_jail_actions(&state, rules, state.current_player_id).map(BranchAction::Jail).collect();
+                let branches = actions
+                    .into_par_iter()
+                    .map(|action| rollout(state, strategies, rules, phase, action, completed_turns, limit))
+                    .collect::<Result<Vec<_>>>()?;
+                return Ok(BranchReport {
+                    decision_index: target,
+                    completed_turns_before_fork: completed_turns,
+                    phase: "Jail",
+                    player_id: state.current_player_id,
+                    fork_state: snapshot(&state),
+                    baseline_action: BranchAction::Jail(baseline_action),
+                    branches,
+                });
+            }
+            index += 1;
         }
         phase = advance_turn(&mut state, rules, &mut strategies, phase);
         if phase == TurnPhase::Finished {
@@ -119,7 +175,7 @@ fn seek<const N: usize>(
             phase = TurnPhase::Start;
         }
     }
-    bail!("management decision {target} was not reached; found {index} eligible decisions")
+    bail!("{kind:?} decision {target} was not reached; found {index} eligible decisions")
 }
 
 fn rollout<const N: usize>(
@@ -127,11 +183,17 @@ fn rollout<const N: usize>(
     mut strategies: [ConfigurableStrategy; N],
     rules: &Ruleset,
     phase: TurnPhase,
-    action: Option<ManagementAction>,
+    action: impl Into<BranchAction>,
     mut completed_turn_count: u32,
     limit: u32,
 ) -> Result<BranchOutcome> {
-    let mut phase = apply_management_decision(&mut state, rules, &mut strategies, phase, action).map_err(|error| anyhow::anyhow!("illegal branch action: {error:?}"))?;
+    let action = action.into();
+    let mut phase = match action {
+        BranchAction::Management(action) => apply_management_decision(&mut state, rules, &mut strategies, phase, action),
+        BranchAction::Jail(action) if phase == TurnPhase::Jail => apply_jail_decision(&mut state, rules, &mut strategies, action),
+        _ => Err(crate::game::engine::action::ActionError::WrongPhase),
+    }
+    .map_err(|error| anyhow::anyhow!("illegal branch action: {error:?}"))?;
     let state_after_action = snapshot(&state);
     while completed_turn_count < limit {
         phase = advance_turn(&mut state, rules, &mut strategies, phase);
@@ -167,7 +229,7 @@ mod tests {
         let parallel = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap().install(run);
         assert_eq!(serial, parallel);
         assert!(serial.branches.len() >= 2);
-        assert_eq!(serial.branches[0].action, None);
+        assert_eq!(serial.branches[0].action, BranchAction::Management(None));
         let baseline = serial.branches.iter().find(|branch| branch.action == serial.baseline_action).unwrap();
         let mut state = GameState::<4>::create_starting_state(&DEX_RULESET, 3);
         let summary = play_game(&mut state, &DEX_RULESET, &mut policies.clone(), 1000);
@@ -210,6 +272,46 @@ mod tests {
             assert_eq!(branch.state_after_action, snapshot(&expected));
         }
         assert!(rollout(state, policies, &rules, TurnPhase::Unmortgaging, Some(ManagementAction::Build(0)), 0, 1).is_err());
+    }
+
+    #[test]
+    fn jail_baseline_branch_matches_normal_play() {
+        let policies = [DEX_OPTIMAL_STRATEGY; 4];
+        for rules in [Ruleset::default(), DEX_RULESET] {
+            let report = branch_decision(&rules, &policies, 3, 1000, 0, BranchKind::Jail).unwrap();
+            assert_eq!(report.phase, "Jail");
+            assert!(report.branches.iter().any(|branch| branch.action == BranchAction::Jail(JailAction::RollForDoubles)));
+            let branch = report.branches.iter().find(|branch| branch.action == report.baseline_action).unwrap();
+            let mut state = GameState::<4>::create_starting_state(&rules, 3);
+            let summary = play_game(&mut state, &rules, &mut policies.clone(), 1000);
+            assert_eq!(branch.final_state, snapshot(&state));
+            assert_eq!(branch.completed_turn_count, summary.turn_count);
+        }
+    }
+
+    #[test]
+    fn jail_branches_charge_bail_or_consume_a_card_once() {
+        use crate::game::engine::movement::send_player_to_jail;
+        let rules = Ruleset::default();
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        send_player_to_jail(&mut state, 0);
+        let policies = [ConfigurableStrategy::new(); 2];
+        assert!(rollout(state, policies, &rules, TurnPhase::Jail, BranchAction::Jail(JailAction::UseGetOutOfJailFreeCard), 0, 1).is_err());
+        state.get_out_of_jail_free_card_holder_by_deck_kind[0] = Some(0);
+        for action in [JailAction::PayBail, JailAction::UseGetOutOfJailFreeCard] {
+            let branch = rollout(state, policies, &rules, TurnPhase::Jail, BranchAction::Jail(action), 0, 1).unwrap();
+            let mut expected = state;
+            expected.jailed_players = 0;
+            if action == JailAction::PayBail {
+                expected.cash_by_player_id[0] -= rules.jail_bail_amount as crate::game::tile::model::Cash;
+            } else {
+                expected.get_out_of_jail_free_card_holder_by_deck_kind[0] = None;
+            }
+            assert_eq!(branch.state_after_action, snapshot(&expected));
+            assert_eq!(branch.completed_turn_count, 1);
+        }
+        state.cash_by_player_id[0] = 0;
+        assert!(rollout(state, policies, &rules, TurnPhase::Jail, BranchAction::Jail(JailAction::PayBail), 0, 1).is_err());
     }
 
     #[test]

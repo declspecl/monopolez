@@ -200,6 +200,21 @@ fn branching_cli_reports_legal_alternatives_and_diagnostic_scope() {
 }
 
 #[test]
+fn jail_branching_cli_uses_separate_decision_indices() {
+    let output = run_json(&["--branch-jail-at", "0", "--seed", "3", "--max-turn-count", "1000", "--json"]);
+    assert_eq!(output["decision_index_scope"], "jail_decisions");
+    assert_eq!(output["report"]["phase"], "Jail");
+    let branches = output["report"]["branches"].as_array().unwrap();
+    assert!(branches.iter().any(|branch| branch["action"] == "RollForDoubles"));
+    assert!(branches.iter().all(|branch| branch["action"].is_string()));
+    let output = Command::new(env!("CARGO_BIN_EXE_monopolez"))
+        .args(["--branch-jail-at", "0", "--branch-management-at", "0"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
 fn trace_rejects_batch_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
     assert!(!output.status.success());
