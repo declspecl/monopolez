@@ -24,10 +24,7 @@ use crate::game::state::model::{
     GameState,
     PlayerSetMask,
 };
-use crate::game::strategy::model::{
-    JailAction,
-    PlayerStrategy,
-};
+use crate::game::strategy::model::PlayerStrategy;
 use crate::game::tile::model::Cash;
 
 pub const MAX_CONSECUTIVE_DOUBLE_COUNT: u8 = 3;
@@ -145,25 +142,11 @@ fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let player_index = player_id as usize;
     let jail_bail_amount = ruleset.jail_bail_amount as Cash;
 
-    match strategies[player_index].choose_jail_action(game_state, ruleset, player_id) {
-        JailAction::UseGetOutOfJailFreeCard => {
-            let held_deck_index = game_state.get_out_of_jail_free_card_holder_by_deck_kind.iter().position(|holder| *holder == Some(player_id));
-            if let Some(held_deck_index) = held_deck_index {
-                game_state.get_out_of_jail_free_card_holder_by_deck_kind[held_deck_index] = None;
-                release_player_from_jail(game_state, player_id);
-
-                return JailTurnResult::RollNormally;
-            }
-        },
-        JailAction::PayBail => {
-            if game_state.cash_by_player_id[player_index] >= jail_bail_amount {
-                charge_player(game_state, ruleset, strategies, player_id, jail_bail_amount, select_fee_creditor(ruleset));
-                release_player_from_jail(game_state, player_id);
-
-                return JailTurnResult::RollNormally;
-            }
-        },
-        JailAction::RollForDoubles => {},
+    let action = strategies[player_index].choose_jail_action(game_state, ruleset, player_id);
+    if super::action::legal_jail_actions(game_state, ruleset, player_id).any(|legal| legal == action)
+        && super::action::execute_jail_action(game_state, ruleset, strategies, player_id, action) == Ok(super::action::JailResolution::Released)
+    {
+        return JailTurnResult::RollNormally;
     }
 
     let dice_roll = game_state.rng.roll_dice();

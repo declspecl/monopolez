@@ -15,6 +15,10 @@ use super::mortgage::{
 use crate::game::board::model::PlayerId;
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
+use crate::game::strategy::model::{
+    JailAction,
+    PlayerStrategy,
+};
 use crate::game::tile::data::{
     PROPERTY_COUNT,
     TILE_COUNT,
@@ -60,6 +64,73 @@ pub enum ActionError {
     InvalidPlayer,
     WrongPhase,
     IllegalAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JailResolution {
+    Released,
+    AttemptDoubles,
+}
+
+pub fn validate_jail_action<const N: usize>(
+    state: &GameState<N>,
+    rules: &Ruleset,
+    player: PlayerId,
+    action: JailAction,
+) -> Result<(), ActionError> {
+    if player as usize >= N || state.bankrupt_players & (1 << player) != 0 || state.current_player_id != player {
+        return Err(ActionError::InvalidPlayer);
+    }
+    if state.jailed_players & (1 << player) == 0 {
+        return Err(ActionError::WrongPhase);
+    }
+    match action {
+        JailAction::RollForDoubles => Ok(()),
+        JailAction::UseGetOutOfJailFreeCard if state.get_out_of_jail_free_card_holder_by_deck_kind.contains(&Some(player)) => Ok(()),
+        JailAction::PayBail if state.cash_by_player_id[player as usize] >= rules.jail_bail_amount as Cash => {
+            if rules.free_parking_jackpot_mode == crate::game::ruleset::model::FreeParkingJackpotMode::TaxesAndFees && state.free_parking_jackpot.checked_add(rules.jail_bail_amount as Cash).is_none()
+            {
+                return Err(ActionError::IllegalAction);
+            }
+            Ok(())
+        },
+        _ => Err(ActionError::IllegalAction),
+    }
+}
+
+pub fn legal_jail_actions<const N: usize>(
+    state: &GameState<N>,
+    rules: &Ruleset,
+    player: PlayerId,
+) -> impl Iterator<Item = JailAction> {
+    let valid = [JailAction::RollForDoubles, JailAction::PayBail, JailAction::UseGetOutOfJailFreeCard].map(|action| validate_jail_action(state, rules, player, action).ok().map(|()| action));
+    valid.into_iter().flatten()
+}
+
+pub fn execute_jail_action<const N: usize, S: PlayerStrategy>(
+    state: &mut GameState<N>,
+    rules: &Ruleset,
+    strategies: &mut [S; N],
+    player: PlayerId,
+    action: JailAction,
+) -> Result<JailResolution, ActionError> {
+    validate_jail_action(state, rules, player, action)?;
+    match action {
+        JailAction::RollForDoubles => return Ok(JailResolution::AttemptDoubles),
+        JailAction::UseGetOutOfJailFreeCard => {
+            let holder = state
+                .get_out_of_jail_free_card_holder_by_deck_kind
+                .iter_mut()
+                .find(|holder| **holder == Some(player))
+                .ok_or(ActionError::IllegalAction)?;
+            *holder = None;
+        },
+        JailAction::PayBail => {
+            super::payment::charge_player(state, rules, strategies, player, rules.jail_bail_amount as Cash, super::payment::select_fee_creditor(rules));
+        },
+    }
+    super::movement::release_player_from_jail(state, player);
+    Ok(JailResolution::Released)
 }
 
 pub fn validate_purchase<const N: usize>(
@@ -160,6 +231,51 @@ pub fn execute_management_action<const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jail_choices_are_legal_and_rechecked_on_execution() {
+        use crate::game::strategy::configurable::ConfigurableStrategy;
+        let rules = Ruleset::default();
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        let mut strategies = [ConfigurableStrategy::new(); 2];
+        assert_eq!(legal_jail_actions(&state, &rules, 0).count(), 0);
+        super::super::movement::send_player_to_jail(&mut state, 0);
+        assert_eq!(legal_jail_actions(&state, &rules, 0).collect::<Vec<_>>(), vec![JailAction::RollForDoubles, JailAction::PayBail]);
+        state.cash_by_player_id[0] = 0;
+        let original = state;
+        for action in [JailAction::PayBail, JailAction::UseGetOutOfJailFreeCard] {
+            assert_eq!(execute_jail_action(&mut state, &rules, &mut strategies, 0, action), Err(ActionError::IllegalAction));
+            assert_eq!(state, original);
+        }
+        assert_eq!(
+            execute_jail_action(&mut state, &rules, &mut strategies, 255, JailAction::RollForDoubles),
+            Err(ActionError::InvalidPlayer)
+        );
+        assert_eq!(state, original);
+        state.get_out_of_jail_free_card_holder_by_deck_kind = [Some(0), Some(0)];
+        assert_eq!(
+            execute_jail_action(&mut state, &rules, &mut strategies, 0, JailAction::UseGetOutOfJailFreeCard),
+            Ok(JailResolution::Released)
+        );
+        assert_eq!(state.get_out_of_jail_free_card_holder_by_deck_kind, [None, Some(0)]);
+        assert_eq!(state.jailed_players, 0);
+    }
+
+    #[test]
+    fn bail_is_charged_once_before_release() {
+        use crate::game::strategy::configurable::ConfigurableStrategy;
+        let rules = crate::game::ruleset::data::DEX_RULESET;
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        let mut strategies = [ConfigurableStrategy::new(); 2];
+        super::super::movement::send_player_to_jail(&mut state, 0);
+        state.cash_by_player_id[0] = rules.jail_bail_amount as Cash;
+        assert_eq!(execute_jail_action(&mut state, &rules, &mut strategies, 0, JailAction::PayBail), Ok(JailResolution::Released));
+        assert_eq!(state.cash_by_player_id[0], 0);
+        assert_eq!(state.free_parking_jackpot, rules.jail_bail_amount as Cash);
+        let original = state;
+        assert_eq!(execute_jail_action(&mut state, &rules, &mut strategies, 0, JailAction::PayBail), Err(ActionError::WrongPhase));
+        assert_eq!(state, original);
+    }
 
     #[test]
     fn purchases_require_current_location_ownership_and_cash() {
