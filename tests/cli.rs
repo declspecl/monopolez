@@ -129,6 +129,8 @@ fn grid_cli_records_the_requested_configuration_range() {
     let output = run_json(&[
         "--grid-file",
         concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/building-grid.json"),
+        "--league-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/benchmark-pool.json"),
         "--grid-start",
         "2",
         "--grid-count",
@@ -143,6 +145,10 @@ fn grid_cli_records_the_requested_configuration_range() {
     ]);
     assert_eq!(output["purpose"], "configuration_screening");
     assert_eq!(output["configuration_count"], 6);
+    assert_eq!(output["opponent_pool"].as_array().unwrap().len(), 3);
+    assert_eq!(output["opponent_pool"][0]["trade_offer_percent"], 150);
+    assert_eq!(output["opponent_pool"][1]["trade_offer_percent"], 400);
+    assert_eq!(output["opponent_pool"][2]["trade_offer_percent"], 0);
     assert_eq!(output["range_start"], 2);
     assert_eq!(output["range_count"], 3);
     let entries = output["entries"].as_array().unwrap();
