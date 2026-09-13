@@ -103,8 +103,8 @@ impl ConfigurableStrategy {
         &self,
         price: Cash,
         cash_percent: Cash,
-    ) -> Cash {
-        price * cash_percent / PERCENT_DIVISOR + self.cash_reserve
+    ) -> u64 {
+        price as u64 * cash_percent as u64 / PERCENT_DIVISOR as u64 + self.cash_reserve as u64
     }
 }
 
@@ -144,7 +144,7 @@ impl PlayerStrategy for ConfigurableStrategy {
     ) -> bool {
         let purchase_price = PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
 
-        game_state.cash_by_player_id[player_id as usize] >= self.calculate_required_cash(purchase_price, self.purchase_cash_percent)
+        game_state.cash_by_player_id[player_id as usize] as u64 >= self.calculate_required_cash(purchase_price, self.purchase_cash_percent)
     }
 
     fn choose_max_auction_bid<const PLAYER_COUNT: usize>(
@@ -155,10 +155,10 @@ impl PlayerStrategy for ConfigurableStrategy {
         tile_id: TileId,
     ) -> Cash {
         let purchase_price = PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
-        let max_bid = purchase_price * self.auction_bid_percent / PERCENT_DIVISOR;
+        let max_bid = purchase_price as u64 * self.auction_bid_percent as u64 / PERCENT_DIVISOR as u64;
         let spendable_cash = game_state.cash_by_player_id[player_id as usize].saturating_sub(self.cash_reserve);
 
-        max_bid.min(spendable_cash)
+        max_bid.min(spendable_cash as u64) as Cash
     }
 
     fn choose_jail_action<const PLAYER_COUNT: usize>(
@@ -212,7 +212,7 @@ impl PlayerStrategy for ConfigurableStrategy {
                 continue;
             }
             let house_purchase_price = HOUSE_PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
-            if game_state.cash_by_player_id[player_id as usize] < self.calculate_required_cash(house_purchase_price, self.improvement_cash_percent) {
+            if (game_state.cash_by_player_id[player_id as usize] as u64) < self.calculate_required_cash(house_purchase_price, self.improvement_cash_percent) {
                 continue;
             }
 
@@ -251,7 +251,7 @@ impl PlayerStrategy for ConfigurableStrategy {
             mortgaged_owned_tiles &= mortgaged_owned_tiles - 1;
 
             let unmortgage_price = UNMORTGAGE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
-            if game_state.cash_by_player_id[player_id as usize] < self.calculate_required_cash(unmortgage_price, self.unmortgage_cash_percent) {
+            if (game_state.cash_by_player_id[player_id as usize] as u64) < self.calculate_required_cash(unmortgage_price, self.unmortgage_cash_percent) {
                 continue;
             }
 
@@ -288,15 +288,15 @@ impl PlayerStrategy for ConfigurableStrategy {
                 continue;
             };
 
-            let offered_cash = PURCHASE_PRICE_BY_TILE_ID[missing_tile_id as usize] as Cash * self.trade_offer_percent / PERCENT_DIVISOR;
-            if game_state.cash_by_player_id[player_id as usize] < offered_cash + self.cash_reserve {
+            let offered_cash = PURCHASE_PRICE_BY_TILE_ID[missing_tile_id as usize] as u64 * self.trade_offer_percent as u64 / PERCENT_DIVISOR as u64;
+            if (game_state.cash_by_player_id[player_id as usize] as u64) < offered_cash + self.cash_reserve as u64 {
                 continue;
             }
 
             return Some(TradeOffer {
                 proposer_player_id: player_id,
                 recipient_player_id: owner_player_id,
-                offered_cash,
+                offered_cash: offered_cash as Cash,
                 offered_tiles: 0,
                 offered_get_out_of_jail_free_cards: 0,
                 requested_cash: 0,
@@ -315,10 +315,10 @@ impl PlayerStrategy for ConfigurableStrategy {
         _player_id: PlayerId,
         trade_offer: &TradeOffer,
     ) -> bool {
-        let received_value = trade_offer.offered_cash + calculate_tile_set_purchase_value(trade_offer.offered_tiles);
-        let given_value = trade_offer.requested_cash + calculate_tile_set_purchase_value(trade_offer.requested_tiles);
+        let received_value = trade_offer.offered_cash as u128 + calculate_tile_set_purchase_value(trade_offer.offered_tiles) as u128;
+        let given_value = trade_offer.requested_cash as u128 + calculate_tile_set_purchase_value(trade_offer.requested_tiles) as u128;
 
-        received_value * PERCENT_DIVISOR > given_value * self.trade_accept_percent
+        received_value * PERCENT_DIVISOR as u128 > given_value * self.trade_accept_percent as u128
     }
 }
 
@@ -334,6 +334,84 @@ mod tests {
         state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3) | (1 << 6) | (1 << 8) | (1 << 9);
         state.cash_by_player_id[0] = 10_000;
         state
+    }
+
+    #[test]
+    fn large_reserves_do_not_wrap_purchase_building_or_unmortgage_thresholds() {
+        let rules = Ruleset::default();
+        let mut state = building_state(&rules);
+        state.cash_by_player_id[0] = Cash::MAX;
+        let mut strategy = ConfigurableStrategy {
+            cash_reserve: Cash::MAX,
+            ..ConfigurableStrategy::new()
+        };
+        assert!(!strategy.should_purchase_property(&state, &rules, 0, 39));
+        assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), None);
+        state.board.mortgaged_tiles = 1 << 1;
+        assert_eq!(strategy.choose_tile_to_unmortgage(&state, &rules, 0), None);
+        assert!(strategy.calculate_required_cash(Cash::MAX, Cash::MAX) > Cash::MAX as u64);
+    }
+
+    #[test]
+    fn percentage_thresholds_and_bids_use_wide_intermediates() {
+        let rules = Ruleset::default();
+        let mut state = building_state(&rules);
+        let mut strategy = ConfigurableStrategy {
+            purchase_cash_percent: Cash::MAX,
+            auction_bid_percent: Cash::MAX,
+            ..ConfigurableStrategy::new()
+        };
+        state.cash_by_player_id[0] = Cash::MAX;
+        assert!(!strategy.should_purchase_property(&state, &rules, 0, 39));
+        assert_eq!(strategy.choose_max_auction_bid(&state, &rules, 0, 39), Cash::MAX - strategy.cash_reserve);
+        let required = strategy.calculate_required_cash(60, Cash::MAX);
+        state.cash_by_player_id[0] = required as Cash;
+        assert!(strategy.should_purchase_property(&state, &rules, 0, 1));
+        state.cash_by_player_id[0] -= 1;
+        assert!(!strategy.should_purchase_property(&state, &rules, 0, 1));
+    }
+
+    #[test]
+    fn large_trade_offers_are_affordable_before_narrowing() {
+        let rules = Ruleset::default();
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        state.board.owned_tiles_by_player_id = [1 << 1, 1 << 3];
+        let mut strategy = ConfigurableStrategy {
+            trade_offer_percent: Cash::MAX,
+            ..ConfigurableStrategy::new()
+        };
+        assert_eq!(strategy.propose_trade(&state, &rules, 0), None);
+        state.cash_by_player_id[0] = Cash::MAX;
+        let offer = strategy.propose_trade(&state, &rules, 0).unwrap();
+        assert_eq!(offer.offered_cash as u64, 60u64 * Cash::MAX as u64 / 100);
+        strategy.cash_reserve = Cash::MAX;
+        assert_eq!(strategy.propose_trade(&state, &rules, 0), None);
+        strategy.cash_reserve = 0;
+        state.board.owned_tiles_by_player_id = [1 << 37, 1 << 39];
+        assert_eq!(strategy.propose_trade(&state, &rules, 0), None);
+    }
+
+    #[test]
+    fn trade_acceptance_compares_large_cash_and_property_bundles_exactly() {
+        let rules = Ruleset::default();
+        let state = GameState::<2>::create_starting_state(&rules, 0);
+        let mut strategy = ConfigurableStrategy::new();
+        let mut offer = TradeOffer {
+            proposer_player_id: 0,
+            recipient_player_id: 1,
+            offered_cash: Cash::MAX,
+            offered_tiles: 1 << 39,
+            offered_get_out_of_jail_free_cards: 0,
+            requested_cash: Cash::MAX,
+            requested_tiles: 1 << 1,
+            requested_get_out_of_jail_free_cards: 0,
+        };
+        assert!(strategy.should_accept_trade(&state, &rules, 1, &offer));
+        strategy.trade_accept_percent = Cash::MAX;
+        assert!(!strategy.should_accept_trade(&state, &rules, 1, &offer));
+        offer.requested_cash = 0;
+        offer.requested_tiles = 0;
+        assert!(strategy.should_accept_trade(&state, &rules, 1, &offer));
     }
 
     #[test]
