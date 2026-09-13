@@ -1,9 +1,14 @@
-use super::improvement::run_improvement_phase;
+use super::action::{
+    ActionError,
+    ManagementAction,
+    ManagementPhase,
+    execute_management_action,
+    legal_management_actions,
+};
 use super::landing::{
     RentModifier,
     resolve_landing,
 };
-use super::mortgage::run_mortgage_phase;
 use super::movement::{
     move_player_forward,
     release_player_from_jail,
@@ -59,6 +64,30 @@ enum JailTurnResult {
     MoveWithoutRollingAgain(DiceRoll),
 }
 
+pub fn apply_management_decision<const N: usize, S: PlayerStrategy>(
+    state: &mut GameState<N>,
+    rules: &Ruleset,
+    strategies: &mut [S; N],
+    phase: TurnPhase,
+    action: Option<ManagementAction>,
+) -> Result<TurnPhase, ActionError> {
+    let (management_phase, next_phase) = match phase {
+        TurnPhase::Unmortgaging => (ManagementPhase::Unmortgaging, TurnPhase::Building),
+        TurnPhase::Building => (ManagementPhase::Building, TurnPhase::Jail),
+        _ => return Err(ActionError::WrongPhase),
+    };
+    let player = state.current_player_id;
+    if player as usize >= N || state.bankrupt_players & (1 << player) != 0 {
+        return Err(ActionError::InvalidPlayer);
+    }
+    let Some(action) = action else {
+        return Ok(next_phase);
+    };
+    let event = execute_management_action(state, rules, player, management_phase, action)?;
+    strategies[player as usize].record_event(event);
+    Ok(phase)
+}
+
 pub fn play_game<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     game_state: &mut GameState<PLAYER_COUNT>,
     ruleset: &Ruleset,
@@ -109,13 +138,14 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
             TurnPhase::Unmortgaging
         },
-        TurnPhase::Unmortgaging => {
-            run_mortgage_phase(game_state, ruleset, strategies, player_id);
-            TurnPhase::Building
-        },
-        TurnPhase::Building => {
-            run_improvement_phase(game_state, ruleset, strategies, player_id);
-            TurnPhase::Jail
+        TurnPhase::Unmortgaging | TurnPhase::Building => {
+            let (management_phase, next_phase) = match phase {
+                TurnPhase::Unmortgaging => (ManagementPhase::Unmortgaging, TurnPhase::Building),
+                _ => (ManagementPhase::Building, TurnPhase::Jail),
+            };
+            let legal = legal_management_actions(game_state, ruleset, player_id, management_phase);
+            let action = strategies[player_id as usize].choose_management_action(game_state, ruleset, player_id, &legal);
+            apply_management_decision(game_state, ruleset, strategies, phase, action).unwrap_or(next_phase)
         },
         TurnPhase::Jail => {
             if game_state.jailed_players & (1 << player_id) == 0 {
@@ -235,6 +265,63 @@ mod tests {
 
     fn create_strategies() -> [GreedyStrategy; PLAYER_COUNT] {
         [GreedyStrategy { cash_reserve: 100 }; PLAYER_COUNT]
+    }
+
+    #[test]
+    fn management_advances_one_building_at_a_time() {
+        let rules = Ruleset::default();
+        let mut state = GameState::<4>::create_starting_state(&rules, 0);
+        let mut strategies = create_strategies();
+        state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
+        let cash = state.cash_by_player_id[0];
+        assert_eq!(advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Building), TurnPhase::Building);
+        assert_eq!(&state.board.improvement_level_by_property_id[..2], &[1, 0]);
+        assert_eq!(state.cash_by_player_id[0], cash - 50);
+        assert_eq!(advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Building), TurnPhase::Building);
+        assert_eq!(&state.board.improvement_level_by_property_id[..2], &[1, 1]);
+        assert_eq!(state.cash_by_player_id[0], cash - 100);
+        let before_stop = state;
+        assert_eq!(apply_management_decision(&mut state, &rules, &mut strategies, TurnPhase::Building, None), Ok(TurnPhase::Jail));
+        assert_eq!(state, before_stop);
+    }
+
+    #[test]
+    fn management_advances_one_unmortgage_at_a_time() {
+        let rules = Ruleset::default();
+        let mut state = GameState::<4>::create_starting_state(&rules, 0);
+        let mut strategies = create_strategies();
+        state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
+        state.board.mortgaged_tiles = state.board.owned_tiles_by_player_id[0];
+        assert_eq!(advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Unmortgaging), TurnPhase::Unmortgaging);
+        assert_eq!(state.board.mortgaged_tiles.count_ones(), 1);
+        let before_stop = state;
+        assert_eq!(apply_management_decision(&mut state, &rules, &mut strategies, TurnPhase::Unmortgaging, None), Ok(TurnPhase::Building));
+        assert_eq!(state, before_stop);
+        assert_eq!(advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Unmortgaging), TurnPhase::Unmortgaging);
+        assert_eq!(state.board.mortgaged_tiles, 0);
+        assert_eq!(advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Unmortgaging), TurnPhase::Building);
+    }
+
+    #[test]
+    fn explicit_management_decisions_reject_illegal_actions_without_mutation() {
+        let rules = Ruleset::default();
+        let mut state = GameState::<4>::create_starting_state(&rules, 0);
+        let mut strategies = create_strategies();
+        let original = state;
+        for (phase, action) in [
+            (TurnPhase::Rolling, None),
+            (TurnPhase::Building, Some(ManagementAction::Build(0))),
+            (TurnPhase::Building, Some(ManagementAction::Build(255))),
+            (TurnPhase::Building, Some(ManagementAction::Unmortgage(1))),
+        ] {
+            assert!(apply_management_decision(&mut state, &rules, &mut strategies, phase, action).is_err());
+            assert_eq!(state, original);
+        }
+        state.current_player_id = 255;
+        assert_eq!(
+            apply_management_decision(&mut state, &rules, &mut strategies, TurnPhase::Building, None),
+            Err(ActionError::InvalidPlayer)
+        );
     }
 
     #[test]

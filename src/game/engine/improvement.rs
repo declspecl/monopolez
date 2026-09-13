@@ -11,7 +11,6 @@ use crate::game::ruleset::model::{
     Ruleset,
 };
 use crate::game::state::model::GameState;
-use crate::game::strategy::model::PlayerStrategy;
 use crate::game::tile::data::PROPERTY_COUNT;
 use crate::game::tile::lut::{
     HOUSE_PURCHASE_PRICE_BY_TILE_ID,
@@ -24,29 +23,6 @@ use crate::game::tile::model::{
     Cash,
     PropertyId,
 };
-
-pub fn run_improvement_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
-    game_state: &mut GameState<PLAYER_COUNT>,
-    ruleset: &Ruleset,
-    strategies: &mut [Strategy; PLAYER_COUNT],
-    player_id: PlayerId,
-) {
-    loop {
-        use super::action::{
-            ManagementPhase,
-            execute_management_action,
-            legal_management_actions,
-        };
-        let legal = legal_management_actions(game_state, ruleset, player_id, ManagementPhase::Building);
-        let Some(action) = strategies[player_id as usize].choose_management_action(game_state, ruleset, player_id, &legal) else {
-            return;
-        };
-        let Ok(event) = execute_management_action(game_state, ruleset, player_id, ManagementPhase::Building, action) else {
-            return;
-        };
-        strategies[player_id as usize].record_event(event);
-    }
-}
 
 pub fn can_improve_property<const PLAYER_COUNT: usize>(
     game_state: &GameState<PLAYER_COUNT>,

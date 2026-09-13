@@ -1,7 +1,5 @@
 use crate::game::board::model::PlayerId;
-use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
-use crate::game::strategy::model::PlayerStrategy;
 use crate::game::tile::lut::{
     MORTGAGE_VALUE_BY_TILE_ID,
     OWNERSHIP_GROUP_BY_TILE_ID,
@@ -14,29 +12,6 @@ use crate::game::tile::model::{
     TileId,
     TileSetMask,
 };
-
-pub fn run_mortgage_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
-    game_state: &mut GameState<PLAYER_COUNT>,
-    ruleset: &Ruleset,
-    strategies: &mut [Strategy; PLAYER_COUNT],
-    player_id: PlayerId,
-) {
-    loop {
-        use super::action::{
-            ManagementPhase,
-            execute_management_action,
-            legal_management_actions,
-        };
-        let legal = legal_management_actions(game_state, ruleset, player_id, ManagementPhase::Unmortgaging);
-        let Some(action) = strategies[player_id as usize].choose_management_action(game_state, ruleset, player_id, &legal) else {
-            return;
-        };
-        let Ok(event) = execute_management_action(game_state, ruleset, player_id, ManagementPhase::Unmortgaging, action) else {
-            return;
-        };
-        strategies[player_id as usize].record_event(event);
-    }
-}
 
 pub fn can_mortgage_tile<const PLAYER_COUNT: usize>(
     game_state: &GameState<PLAYER_COUNT>,
@@ -144,6 +119,7 @@ pub fn has_group_improvements<const PLAYER_COUNT: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::ruleset::model::Ruleset;
 
     const PARK_PLACE_TILE_ID: TileId = 37;
     const BOARDWALK_TILE_ID: TileId = 39;
