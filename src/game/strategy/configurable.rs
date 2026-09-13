@@ -7,6 +7,10 @@ use super::model::{
     JailAction,
     PlayerStrategy,
 };
+use crate::game::board::data::{
+    HOTEL_IMPROVEMENT_LEVEL,
+    MAX_HOUSE_IMPROVEMENT_LEVEL,
+};
 use crate::game::board::model::PlayerId;
 use crate::game::engine::improvement::can_improve_property;
 use crate::game::engine::trade::calculate_tile_set_purchase_value;
@@ -16,6 +20,7 @@ use crate::game::tile::data::PROPERTY_COUNT;
 use crate::game::tile::lut::{
     HOUSE_PURCHASE_PRICE_BY_TILE_ID,
     OWNABLE_TILE_SET_MASK,
+    OWNERSHIP_GROUP_BY_TILE_ID,
     PURCHASE_PRICE_BY_TILE_ID,
     TILE_ID_BY_PROPERTY_ID,
     TILE_SET_MASK_BY_OWNERSHIP_GROUP,
@@ -31,6 +36,31 @@ use crate::game::trade::model::TradeOffer;
 
 const PERCENT_DIVISOR: Cash = 100;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BuildingAllocation {
+    #[default]
+    Spread,
+    Concentrate,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DevelopmentCeiling {
+    ThreeHouses,
+    FourHouses,
+    #[default]
+    Hotel,
+}
+
+impl DevelopmentCeiling {
+    pub const fn improvement_level(self) -> u8 {
+        match self {
+            Self::ThreeHouses => 3,
+            Self::FourHouses => MAX_HOUSE_IMPROVEMENT_LEVEL,
+            Self::Hotel => HOTEL_IMPROVEMENT_LEVEL,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConfigurableStrategy {
     pub cash_reserve: Cash,
@@ -45,6 +75,10 @@ pub struct ConfigurableStrategy {
     pub mortgages_before_selling_buildings: bool,
     #[serde(default, alias = "camps_in_jail_below_unowned_tile_count")]
     pub jail_camping_unowned_tile_threshold: Option<u8>,
+    #[serde(default)]
+    pub building_allocation: BuildingAllocation,
+    #[serde(default)]
+    pub development_ceiling: DevelopmentCeiling,
 }
 
 impl ConfigurableStrategy {
@@ -60,6 +94,8 @@ impl ConfigurableStrategy {
             pays_bail_when_affordable: false,
             mortgages_before_selling_buildings: false,
             jail_camping_unowned_tile_threshold: None,
+            building_allocation: BuildingAllocation::Spread,
+            development_ceiling: DevelopmentCeiling::Hotel,
         }
     }
 
@@ -159,10 +195,22 @@ impl PlayerStrategy for ConfigurableStrategy {
         ruleset: &Ruleset,
         player_id: PlayerId,
     ) -> Option<PropertyId> {
-        let mut least_improved_property: Option<(u8, PropertyId)> = None;
+        let mut group_development = [0u8; OwnershipGroup::COUNT];
+        if self.building_allocation == BuildingAllocation::Concentrate {
+            for (property_id, tile_id) in TILE_ID_BY_PROPERTY_ID.iter().enumerate() {
+                let group = OWNERSHIP_GROUP_BY_TILE_ID[*tile_id as usize].expect("property tiles should have an ownership group");
+                group_development[group as usize] += game_state.board.improvement_level_by_property_id[property_id];
+            }
+        }
+        let mut selected_property = None;
+        let mut selected_priority = None;
 
         for property_id in 0..PROPERTY_COUNT {
             let tile_id = TILE_ID_BY_PROPERTY_ID[property_id];
+            let improvement_level = game_state.board.improvement_level_by_property_id[property_id];
+            if improvement_level >= self.development_ceiling.improvement_level() {
+                continue;
+            }
             let house_purchase_price = HOUSE_PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
             if game_state.cash_by_player_id[player_id as usize] < self.calculate_required_cash(house_purchase_price, self.improvement_cash_percent) {
                 continue;
@@ -172,13 +220,21 @@ impl PlayerStrategy for ConfigurableStrategy {
                 continue;
             }
 
-            let improvement_level = game_state.board.improvement_level_by_property_id[property_id];
-            if least_improved_property.is_none_or(|(lowest_improvement_level, _)| improvement_level < lowest_improvement_level) {
-                least_improved_property = Some((improvement_level, property_id as PropertyId));
+            let (development, group_index) = match self.building_allocation {
+                BuildingAllocation::Spread => (0, 0),
+                BuildingAllocation::Concentrate => {
+                    let group = OWNERSHIP_GROUP_BY_TILE_ID[tile_id as usize].expect("property tiles should have an ownership group") as usize;
+                    (group_development[group], group)
+                },
+            };
+            let priority = (std::cmp::Reverse(development), group_index, improvement_level);
+            if selected_priority.is_none_or(|previous| priority < previous) {
+                selected_priority = Some(priority);
+                selected_property = Some(property_id as PropertyId);
             }
         }
 
-        least_improved_property.map(|(_, property_id)| property_id)
+        selected_property
     }
 
     fn choose_tile_to_unmortgage<const PLAYER_COUNT: usize>(
@@ -272,6 +328,114 @@ mod tests {
     use crate::game::engine::action::validate_jail_action;
     use crate::game::engine::movement::send_player_to_jail;
     use crate::game::ruleset::data::DEX_RULESET;
+
+    fn building_state(rules: &Ruleset) -> GameState<2> {
+        let mut state = GameState::<2>::create_starting_state(rules, 0);
+        state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3) | (1 << 6) | (1 << 8) | (1 << 9);
+        state.cash_by_player_id[0] = 10_000;
+        state
+    }
+
+    #[test]
+    fn building_allocation_changes_group_priority() {
+        for rules in [Ruleset::default(), DEX_RULESET] {
+            let mut state = building_state(&rules);
+            state.board.improvement_level_by_property_id[2..5].fill(2);
+            state.board.bank_house_count -= 6;
+            let mut strategy = ConfigurableStrategy::new();
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(0));
+            strategy.building_allocation = BuildingAllocation::Concentrate;
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(2));
+            state.board.mortgaged_tiles = 1 << 6;
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(0));
+        }
+    }
+
+    #[test]
+    fn all_building_policies_obey_engine_rules_and_their_ceiling() {
+        use crate::game::engine::action::{
+            ManagementAction,
+            ManagementPhase,
+            execute_management_action,
+        };
+        for rules in [Ruleset::default(), DEX_RULESET] {
+            for building_allocation in [BuildingAllocation::Spread, BuildingAllocation::Concentrate] {
+                for development_ceiling in [DevelopmentCeiling::ThreeHouses, DevelopmentCeiling::FourHouses, DevelopmentCeiling::Hotel] {
+                    let mut strategy = ConfigurableStrategy {
+                        building_allocation,
+                        development_ceiling,
+                        ..ConfigurableStrategy::new()
+                    };
+                    let mut state = building_state(&rules);
+                    let ceiling = development_ceiling.improvement_level();
+                    for _ in 0..5 * ceiling {
+                        let property = strategy.choose_property_to_improve(&state, &rules, 0).unwrap();
+                        assert!(state.board.improvement_level_by_property_id[property as usize] < ceiling);
+                        execute_management_action(&mut state, &rules, 0, ManagementPhase::Building, ManagementAction::Build(property)).unwrap();
+                    }
+                    assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), None);
+                    assert_eq!(&state.board.improvement_level_by_property_id[..5], &[ceiling; 5]);
+                    assert_eq!(state.cash_by_player_id[0], 10_000 - 250 * ceiling as Cash);
+                    assert_eq!(state.board.bank_house_count, if ceiling == HOTEL_IMPROVEMENT_LEVEL { 32 } else { 32 - 5 * ceiling });
+                    assert_eq!(state.board.bank_hotel_count, if ceiling == HOTEL_IMPROVEMENT_LEVEL { 7 } else { 12 });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn concentration_moves_on_when_preferred_group_reaches_ceiling() {
+        let rules = Ruleset::default();
+        let mut state = building_state(&rules);
+        state.board.improvement_level_by_property_id[2..5].fill(3);
+        state.board.bank_house_count -= 9;
+        let mut strategy = ConfigurableStrategy {
+            building_allocation: BuildingAllocation::Concentrate,
+            development_ceiling: DevelopmentCeiling::ThreeHouses,
+            ..ConfigurableStrategy::new()
+        };
+        assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(0));
+        strategy.development_ceiling = DevelopmentCeiling::FourHouses;
+        assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(2));
+    }
+
+    #[test]
+    fn building_policies_respect_cash_and_bank_supply() {
+        let rules = Ruleset::default();
+        for building_allocation in [BuildingAllocation::Spread, BuildingAllocation::Concentrate] {
+            let mut strategy = ConfigurableStrategy {
+                building_allocation,
+                ..ConfigurableStrategy::new()
+            };
+            let mut state = building_state(&rules);
+            state.cash_by_player_id[0] = strategy.cash_reserve + 49;
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), None);
+            state.cash_by_player_id[0] += 1;
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), Some(0));
+            state.board.bank_house_count = 0;
+            assert_eq!(strategy.choose_property_to_improve(&state, &rules, 0), None);
+        }
+    }
+
+    #[test]
+    fn building_settings_default_for_old_json_and_round_trip_all_combinations() {
+        let mut value = serde_json::to_value(ConfigurableStrategy::new()).unwrap();
+        value.as_object_mut().unwrap().remove("building_allocation");
+        value.as_object_mut().unwrap().remove("development_ceiling");
+        assert_eq!(serde_json::from_value::<ConfigurableStrategy>(value.clone()).unwrap(), ConfigurableStrategy::new());
+        for building_allocation in [BuildingAllocation::Spread, BuildingAllocation::Concentrate] {
+            for development_ceiling in [DevelopmentCeiling::ThreeHouses, DevelopmentCeiling::FourHouses, DevelopmentCeiling::Hotel] {
+                let strategy = ConfigurableStrategy {
+                    building_allocation,
+                    development_ceiling,
+                    ..ConfigurableStrategy::new()
+                };
+                assert_eq!(serde_json::from_value::<ConfigurableStrategy>(serde_json::to_value(strategy).unwrap()).unwrap(), strategy);
+            }
+        }
+        value["development_ceiling"] = serde_json::json!("SixHouses");
+        assert!(serde_json::from_value::<ConfigurableStrategy>(value).is_err());
+    }
 
     #[test]
     fn adaptive_jail_threshold_is_inclusive_and_counts_all_players() {

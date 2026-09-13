@@ -473,6 +473,34 @@ mod tests {
     }
 
     #[test]
+    fn building_policy_combinations_record_and_replay() {
+        use crate::game::strategy::configurable::{
+            BuildingAllocation,
+            DevelopmentCeiling,
+        };
+        for building_allocation in [BuildingAllocation::Spread, BuildingAllocation::Concentrate] {
+            for development_ceiling in [DevelopmentCeiling::ThreeHouses, DevelopmentCeiling::FourHouses, DevelopmentCeiling::Hotel] {
+                let strategy = ConfigurableStrategy {
+                    building_allocation,
+                    development_ceiling,
+                    ..DEX_OPTIMAL_STRATEGY
+                };
+                let trace = record_game(DEX_RULESET, vec![strategy; 4], 3, 1000).unwrap();
+                assert!(
+                    trace
+                        .decisions
+                        .iter()
+                        .any(|decision| decision.request["method"] == "choose_property_to_improve" && !decision.response.is_null())
+                );
+                let mut restored: GameTrace = serde_json::from_str(&serde_json::to_string(&trace).unwrap()).unwrap();
+                assert_eq!(restored.strategies, vec![strategy; 4]);
+                restored.strategies = vec![BASELINE_STRATEGY; 4];
+                replay_game(&restored).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn adaptive_jail_decisions_round_trip_and_replay_without_the_policy() {
         let strategy = ConfigurableStrategy {
             jail_camping_unowned_tile_threshold: Some(4),

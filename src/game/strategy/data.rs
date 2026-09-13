@@ -1,4 +1,8 @@
-use super::configurable::ConfigurableStrategy;
+use super::configurable::{
+    BuildingAllocation,
+    ConfigurableStrategy,
+    DevelopmentCeiling,
+};
 
 pub const BASELINE_STRATEGY: ConfigurableStrategy = ConfigurableStrategy::new();
 
@@ -14,6 +18,8 @@ pub const DEX_OPTIMAL_STRATEGY: ConfigurableStrategy = ConfigurableStrategy {
     pays_bail_when_affordable: true,
     mortgages_before_selling_buildings: false,
     jail_camping_unowned_tile_threshold: None,
+    building_allocation: BuildingAllocation::Spread,
+    development_ceiling: DevelopmentCeiling::Hotel,
 };
 
 // heads up there is no third party to outbid, so paying monopoly premiums just funds the opponent
@@ -28,6 +34,8 @@ pub const DEX_DUEL_STRATEGY: ConfigurableStrategy = ConfigurableStrategy {
     pays_bail_when_affordable: false,
     mortgages_before_selling_buildings: false,
     jail_camping_unowned_tile_threshold: None,
+    building_allocation: BuildingAllocation::Spread,
+    development_ceiling: DevelopmentCeiling::Hotel,
 };
 
 pub const NEVER_TRADING_STRATEGY: ConfigurableStrategy = ConfigurableStrategy {
@@ -41,4 +49,6 @@ pub const NEVER_TRADING_STRATEGY: ConfigurableStrategy = ConfigurableStrategy {
     pays_bail_when_affordable: false,
     mortgages_before_selling_buildings: false,
     jail_camping_unowned_tile_threshold: None,
+    building_allocation: BuildingAllocation::Spread,
+    development_ceiling: DevelopmentCeiling::Hotel,
 };
