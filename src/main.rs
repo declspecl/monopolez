@@ -116,6 +116,9 @@ struct CliArguments {
     #[arg(long)]
     vs_pool: bool,
 
+    #[arg(long, requires = "vs_pool", help = "Baseline strategy JSON for an identical-seed paired comparison", conflicts_with_all = ["analyze", "tune", "head_to_head", "print_ruleset"])]
+    compare_strategy_file: Option<PathBuf>,
+
     #[arg(long)]
     analyze: bool,
 
@@ -351,6 +354,30 @@ fn main() -> Result<()> {
             player_count: arguments.player_count,
         };
 
+        if let Some(path) = &arguments.compare_strategy_file {
+            let baseline: ConfigurableStrategy = serde_json::from_str(&fs::read_to_string(path).with_context(|| format!("failed to read baseline strategy {}", path.display()))?)?;
+            let result = simulation::paired::compare_policies(&ruleset, candidate, baseline, &opponent_pool, &tournament_config)?;
+            if arguments.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1, "mode": "paired_policy_comparison", "build": BuildProvenance::current(),
+                        "ruleset": ruleset, "config": tournament_config, "candidate": candidate, "baseline": baseline,
+                        "opponent_pool": opponent_pool, "pairing": "same_seed_seat_and_opponent_lineup", "non_win_includes_unfinished": true,
+                        "win_rate_difference": result.win_rate_difference(), "result": result
+                    }))?
+                );
+            } else {
+                println!(
+                    "paired games {} per policy  candidate-only wins {}  baseline-only wins {}  both {}  neither {}",
+                    result.candidate.game_count, result.candidate_only_win_count, result.baseline_only_win_count, result.both_win_count, result.neither_win_count
+                );
+                if let Some(difference) = result.win_rate_difference() {
+                    println!("candidate minus baseline {:.3} percentage points", difference * 100.0);
+                }
+            }
+            return Ok(());
+        }
         let result = run_pool_tournament(&ruleset, candidate, &opponent_pool, &tournament_config)?;
         if arguments.json {
             println!(

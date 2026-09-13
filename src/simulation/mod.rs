@@ -3,6 +3,7 @@ pub mod branching;
 pub mod checkpoint;
 pub mod grid;
 pub mod model;
+pub mod paired;
 pub mod provenance;
 pub mod runner;
 pub mod tournament;

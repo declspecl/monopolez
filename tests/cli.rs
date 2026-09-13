@@ -274,6 +274,33 @@ fn grid_checkpoint_resumes_and_recovers_an_interrupted_tail() {
 }
 
 #[test]
+fn paired_comparison_cli_preserves_inputs_and_counts_unfinished_games() {
+    let output = run_json(&[
+        "--vs-pool",
+        "--compare-strategy-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/dex-optimal.json"),
+        "--league-file",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/strategies/benchmark-pool.json"),
+        "--game-count",
+        "4",
+        "--max-turn-count",
+        "1",
+        "--seed",
+        "17",
+        "--json",
+    ]);
+    assert_eq!(output["mode"], "paired_policy_comparison");
+    assert_eq!(output["baseline"]["trade_offer_percent"], 400);
+    assert_eq!(output["candidate"]["trade_offer_percent"], 150);
+    assert_eq!(output["config"]["seed"], 17);
+    assert_eq!(output["pairing"], "same_seed_seat_and_opponent_lineup");
+    assert_eq!(output["result"]["neither_win_count"], 4);
+    assert_eq!(output["result"]["candidate"]["game_count"], 4);
+    assert_eq!(output["result"]["baseline"]["game_count"], 4);
+    assert_eq!(output["win_rate_difference"], 0.0);
+}
+
+#[test]
 fn trace_rejects_batch_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_monopolez")).args(["--trace", "--game-count", "20"]).output().unwrap();
     assert!(!output.status.success());

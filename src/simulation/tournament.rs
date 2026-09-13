@@ -161,31 +161,33 @@ fn play_tournament<const PLAYER_COUNT: usize>(
 ) -> TournamentResult {
     (0..config.game_count)
         .into_par_iter()
-        .map(|game_index| {
-            let candidate_seat = game_index as usize % PLAYER_COUNT;
-            let mut strategies: [ConfigurableStrategy; PLAYER_COUNT] = core::array::from_fn(|seat| {
-                if seat == candidate_seat {
-                    return candidate;
-                }
-
-                opponent_pool[(game_index as usize / PLAYER_COUNT + seat) % opponent_pool.len()]
-            });
-            let mut game_state = GameState::<PLAYER_COUNT>::create_starting_state(ruleset, config.seed.wrapping_add(game_index as u64));
-
-            let game_summary = play_game(&mut game_state, ruleset, &mut strategies, config.max_turn_count);
-            let candidate_win_count = match game_summary.outcome {
-                GameOutcome::Winner(player_id) if player_id as usize == candidate_seat => 1,
-                _ => 0,
-            };
-
-            TournamentResult {
-                game_count: 1,
-                candidate_win_count,
-                decisive_game_count: u32::from(matches!(game_summary.outcome, GameOutcome::Winner(_))),
-                total_turn_count: game_summary.turn_count as u64,
-            }
-        })
+        .map(|game_index| play_trial::<PLAYER_COUNT>(ruleset, candidate, opponent_pool, config, game_index))
         .reduce(TournamentResult::empty, TournamentResult::combine)
+}
+
+pub(super) fn play_trial<const N: usize>(
+    rules: &Ruleset,
+    candidate: ConfigurableStrategy,
+    opponents: &[ConfigurableStrategy],
+    config: &TournamentConfig,
+    game_index: u32,
+) -> TournamentResult {
+    let candidate_seat = game_index as usize % N;
+    let mut strategies = core::array::from_fn(|seat| {
+        if seat == candidate_seat {
+            candidate
+        } else {
+            opponents[(game_index as usize / N + seat) % opponents.len()]
+        }
+    });
+    let mut state = GameState::<N>::create_starting_state(rules, config.seed.wrapping_add(game_index as u64));
+    let summary = play_game(&mut state, rules, &mut strategies, config.max_turn_count);
+    TournamentResult {
+        game_count: 1,
+        candidate_win_count: u32::from(matches!(summary.outcome, GameOutcome::Winner(player) if player as usize == candidate_seat)),
+        decisive_game_count: u32::from(matches!(summary.outcome, GameOutcome::Winner(_))),
+        total_turn_count: summary.turn_count as u64,
+    }
 }
 
 #[cfg(test)]
