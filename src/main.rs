@@ -540,6 +540,10 @@ fn main() -> Result<()> {
             );
             print_win_rate_interval("held-out baseline", &session.validation.baseline);
             print_win_rate_interval("held-out champion", &session.validation.champion);
+            println!(
+                "held-out paired wins: champion only {}  baseline only {}  both {}  neither {}",
+                session.validation.champion_only_win_count, session.validation.baseline_only_win_count, session.validation.both_win_count, session.validation.neither_win_count
+            );
             println!("marginal intervals do not test the paired champion-minus-baseline difference");
         }
 

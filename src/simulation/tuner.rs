@@ -133,6 +133,11 @@ pub struct ValidationReport {
     pub champion_strategy: ConfigurableStrategy,
     pub baseline: TournamentResult,
     pub champion: TournamentResult,
+    pub both_win_count: u32,
+    pub neither_win_count: u32,
+    pub champion_only_win_count: u32,
+    pub baseline_only_win_count: u32,
+    pub pairing: &'static str,
 }
 
 impl TuningSession {
@@ -167,12 +172,18 @@ pub fn tune_strategy_over_generations(
         ..*config
     };
     let validation_pool = opponent_pool[..opponent_pool.len() - 1].to_vec();
+    let paired = super::paired::compare_policies(ruleset, champion_strategy, baseline_strategy, &validation_pool, &validation_config)?;
     let validation = ValidationReport {
         config: validation_config,
         baseline_strategy,
         champion_strategy,
-        baseline: run_pool_tournament(ruleset, baseline_strategy, &validation_pool, &validation_config)?,
-        champion: run_pool_tournament(ruleset, champion_strategy, &validation_pool, &validation_config)?,
+        baseline: paired.baseline,
+        champion: paired.candidate,
+        both_win_count: paired.both_win_count,
+        neither_win_count: paired.neither_win_count,
+        champion_only_win_count: paired.candidate_only_win_count,
+        baseline_only_win_count: paired.baseline_only_win_count,
+        pairing: "same_seed_seat_and_opponent_lineup",
         opponent_pool: validation_pool,
     };
     Ok(TuningSession {
@@ -331,6 +342,19 @@ mod tests {
         assert!((0..validation.config.game_count).all(|i| !training_seeds.contains(&validation.config.seed.wrapping_add(i as u64))));
         assert_eq!(validation.opponent_pool, vec![BASELINE_STRATEGY]);
         assert_eq!(validation.champion_strategy, session.champion());
+        let training = tune_strategy(&DEX_RULESET, &config, 1, &[BASELINE_STRATEGY]).unwrap();
+        assert_eq!(training.best_strategy, session.champion());
+        let paired = super::super::paired::compare_policies(&DEX_RULESET, session.champion(), BASELINE_STRATEGY, &validation.opponent_pool, &validation.config).unwrap();
+        assert_eq!(validation.champion_only_win_count, paired.candidate_only_win_count);
+        assert_eq!(validation.baseline_only_win_count, paired.baseline_only_win_count);
+        assert_eq!(validation.both_win_count, paired.both_win_count);
+        assert_eq!(validation.neither_win_count, paired.neither_win_count);
+        assert_eq!(validation.both_win_count + validation.champion_only_win_count, validation.champion.candidate_win_count);
+        assert_eq!(validation.both_win_count + validation.baseline_only_win_count, validation.baseline.candidate_win_count);
+        assert_eq!(
+            validation.both_win_count + validation.neither_win_count + validation.champion_only_win_count + validation.baseline_only_win_count,
+            config.game_count
+        );
         assert_eq!(
             validation.champion,
             run_pool_tournament(&DEX_RULESET, session.champion(), &validation.opponent_pool, &validation.config).unwrap()

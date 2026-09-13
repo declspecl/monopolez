@@ -41,6 +41,11 @@ fn tuning_with_sweep_emits_one_document_including_validation() {
     assert_eq!(output["validation"]["config"]["seed"], 21);
     assert_eq!(output["validation"]["baseline"]["game_count"], 4);
     assert_eq!(output["validation"]["champion"]["game_count"], 4);
+    assert_eq!(output["validation"]["pairing"], "same_seed_seat_and_opponent_lineup");
+    assert_eq!(output["validation"]["neither_win_count"], 4);
+    assert_eq!(output["validation"]["champion_only_win_count"], 0);
+    assert_eq!(output["validation"]["baseline_only_win_count"], 0);
+    assert_eq!(output["validation"]["both_win_count"], 0);
     for candidate in ["baseline", "champion"] {
         let interval = &output["validation"][candidate]["candidate_win_rate_interval"];
         assert_eq!(interval["sample_count"], 4);
