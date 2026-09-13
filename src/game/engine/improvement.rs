@@ -124,7 +124,57 @@ pub fn sell_one_building<const PLAYER_COUNT: usize>(
     game_state: &mut GameState<PLAYER_COUNT>,
     player_id: PlayerId,
 ) -> Option<BuildingSale> {
+    if player_id as usize >= PLAYER_COUNT {
+        return None;
+    }
     let property_id = find_most_improved_property(game_state, player_id)?;
+    sell_property_building(game_state, &Ruleset::default(), player_id, property_id)
+}
+
+pub fn can_sell_property_building<const N: usize>(
+    state: &GameState<N>,
+    rules: &Ruleset,
+    player: PlayerId,
+    property: PropertyId,
+) -> bool {
+    if player as usize >= N || property as usize >= PROPERTY_COUNT || state.bankrupt_players & (1 << player) != 0 {
+        return false;
+    }
+    let tile = TILE_ID_BY_PROPERTY_ID[property as usize] as usize;
+    let level = state.board.improvement_level_by_property_id[property as usize];
+    if state.board.owned_tiles_by_player_id[player as usize] & (1 << tile) == 0 || level == 0 || level > HOTEL_IMPROVEMENT_LEVEL {
+        return false;
+    }
+    if rules.property_improvement_distribution == PropertyImprovementDistribution::Even {
+        let group = OWNERSHIP_GROUP_BY_TILE_ID[tile].expect("property has a group");
+        let mut tiles = TILE_SET_MASK_BY_OWNERSHIP_GROUP[group as usize];
+        while tiles != 0 {
+            let group_tile = tiles.trailing_zeros() as usize;
+            tiles &= tiles - 1;
+            let group_property = PROPERTY_ID_BY_TILE_ID[group_tile].expect("color group contains properties") as usize;
+            if state.board.improvement_level_by_property_id[group_property] > level {
+                return false;
+            }
+        }
+    }
+    let levels_sold = if level == HOTEL_IMPROVEMENT_LEVEL && state.board.bank_house_count < MAX_HOUSE_IMPROVEMENT_LEVEL {
+        HOTEL_IMPROVEMENT_LEVEL
+    } else {
+        1
+    };
+    let proceeds = HOUSE_PURCHASE_PRICE_BY_TILE_ID[tile] as Cash / 2 * levels_sold as Cash;
+    state.cash_by_player_id[player as usize].checked_add(proceeds).is_some()
+}
+
+pub fn sell_property_building<const PLAYER_COUNT: usize>(
+    game_state: &mut GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
+    player_id: PlayerId,
+    property_id: PropertyId,
+) -> Option<BuildingSale> {
+    if !can_sell_property_building(game_state, ruleset, player_id, property_id) {
+        return None;
+    }
 
     let property_index = property_id as usize;
     let tile_id = TILE_ID_BY_PROPERTY_ID[property_index];
@@ -171,7 +221,7 @@ pub fn sell_one_building<const PLAYER_COUNT: usize>(
     })
 }
 
-fn find_most_improved_property<const PLAYER_COUNT: usize>(
+pub fn find_most_improved_property<const PLAYER_COUNT: usize>(
     game_state: &GameState<PLAYER_COUNT>,
     player_id: PlayerId,
 ) -> Option<PropertyId> {

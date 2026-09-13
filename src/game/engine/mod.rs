@@ -4,6 +4,7 @@ pub mod card;
 pub mod event;
 pub mod improvement;
 pub mod landing;
+pub mod liquidation;
 pub mod mortgage;
 pub mod movement;
 pub mod payment;

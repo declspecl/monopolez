@@ -1,5 +1,10 @@
 use super::auction::run_auction;
-use super::improvement::sell_one_building;
+use super::improvement::find_most_improved_property;
+use super::liquidation::{
+    LiquidationAction,
+    execute_liquidation_action,
+    legal_liquidation_actions,
+};
 use super::mortgage::calculate_mortgage_transfer_interest;
 use super::trade::run_trade_phase;
 use crate::game::board::model::PlayerId;
@@ -11,7 +16,6 @@ use crate::game::ruleset::model::{
 };
 use crate::game::state::model::GameState;
 use crate::game::strategy::model::PlayerStrategy;
-use crate::game::tile::lut::MORTGAGE_VALUE_BY_TILE_ID;
 use crate::game::tile::model::{
     Cash,
     TileId,
@@ -51,7 +55,7 @@ pub fn charge_player<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     }
 
     if game_state.cash_by_player_id[debtor_index] < amount {
-        raise_cash(game_state, &mut strategies[debtor_index], debtor_player_id, amount);
+        raise_cash(game_state, ruleset, &mut strategies[debtor_index], debtor_player_id, amount);
     }
 
     if game_state.cash_by_player_id[debtor_index] >= amount {
@@ -81,6 +85,7 @@ fn credit_creditor<const PLAYER_COUNT: usize>(
 
 fn raise_cash<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     game_state: &mut GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
     strategy: &mut Strategy,
     player_id: PlayerId,
     required_amount: Cash,
@@ -88,30 +93,16 @@ fn raise_cash<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let player_index = player_id as usize;
 
     while game_state.cash_by_player_id[player_index] < required_amount {
-        let Some(sale) = sell_one_building(game_state, player_id) else {
+        let action = find_most_improved_property(game_state, player_id)
+            .map(LiquidationAction::SellBuilding)
+            .or_else(|| legal_liquidation_actions(game_state, ruleset, player_id).next());
+        let Some(action) = action else {
             break;
         };
-        strategy.record_event(super::event::GameEvent::BuildingSold {
-            player_id,
-            property_id: sale.property_id,
-            previous_level: sale.previous_level,
-            level: sale.level,
-            proceeds: sale.proceeds,
-        });
-    }
-
-    let mut unmortgaged_owned_tiles = game_state.board.owned_tiles_by_player_id[player_index] & !game_state.board.mortgaged_tiles;
-    while unmortgaged_owned_tiles != 0 && game_state.cash_by_player_id[player_index] < required_amount {
-        let tile_id = unmortgaged_owned_tiles.trailing_zeros();
-        unmortgaged_owned_tiles &= unmortgaged_owned_tiles - 1;
-
-        game_state.board.mortgaged_tiles |= 1 << tile_id;
-        game_state.cash_by_player_id[player_index] += MORTGAGE_VALUE_BY_TILE_ID[tile_id as usize] as Cash;
-        strategy.record_event(super::event::GameEvent::TileMortgaged {
-            player_id,
-            tile_id: tile_id as TileId,
-            proceeds: MORTGAGE_VALUE_BY_TILE_ID[tile_id as usize] as Cash,
-        });
+        let Ok(event) = execute_liquidation_action(game_state, ruleset, player_id, action) else {
+            break;
+        };
+        strategy.record_event(event);
     }
 }
 
