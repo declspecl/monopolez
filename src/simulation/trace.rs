@@ -114,7 +114,29 @@ macro_rules! record_decision {
     };
 }
 
+impl RecordedStrategy {
+    record_decision!(choose_liquidation_action, Option<crate::game::engine::liquidation::LiquidationAction>, None, required_amount: Cash);
+}
+
 impl PlayerStrategy for RecordedStrategy {
+    fn choose_liquidation_action<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        required_amount: Cash,
+    ) -> Option<crate::game::engine::liquidation::LiquidationAction> {
+        let tape = self.tape.borrow();
+        if tape.error.is_some() {
+            return None;
+        }
+        if tape.replay && tape.event_version < 4 {
+            return crate::game::engine::liquidation::default_liquidation_action(state, rules, player);
+        }
+        drop(tape);
+        RecordedStrategy::choose_liquidation_action(self, state, rules, player, required_amount)
+    }
+
     fn record_event(
         &mut self,
         event: GameEvent,
@@ -197,7 +219,7 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 3,
+        schema_version: 4,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
@@ -221,8 +243,8 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if !(1..=3).contains(&trace.schema_version) || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1, 2, or 3 and a positive turn limit");
+    if !(1..=4).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 through 4 and a positive turn limit");
     }
     if trace.schema_version == 1 && !trace.events.is_empty() {
         bail!("schema version 1 does not support event verification");
@@ -298,6 +320,21 @@ mod tests {
         DEX_OPTIMAL_STRATEGY,
     };
 
+    fn downgrade(
+        trace: &mut GameTrace,
+        version: u32,
+    ) {
+        for record in &mut trace.events {
+            record.decisions_before = trace.decisions[..record.decisions_before]
+                .iter()
+                .filter(|decision| decision.request["method"] != "choose_liquidation_action")
+                .count();
+        }
+        trace.decisions.retain(|decision| decision.request["method"] != "choose_liquidation_action");
+        trace.events.retain(|record| record.event.trace_version() <= version);
+        trace.schema_version = version;
+    }
+
     #[test]
     fn recording_preserves_game_and_replay_ignores_strategy_changes() {
         let policies = vec![BASELINE_STRATEGY, DEX_OPTIMAL_STRATEGY];
@@ -371,8 +408,7 @@ mod tests {
         changed.events.push(changed.events.last().unwrap().clone());
         assert!(replay_game(&changed).is_err());
         let mut legacy = trace;
-        legacy.schema_version = 1;
-        legacy.events.clear();
+        downgrade(&mut legacy, 1);
         replay_game(&legacy).unwrap();
     }
 
@@ -426,11 +462,39 @@ mod tests {
 
     #[test]
     fn older_event_traces_skip_new_liquidation_events() {
-        let mut trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 3, 1000).unwrap();
+        let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 3, 1000).unwrap();
         assert!(trace.events.iter().any(|record| record.event.trace_version() == 3));
         replay_game(&trace).unwrap();
-        trace.schema_version = 2;
-        trace.events.retain(|record| record.event.trace_version() <= 2);
+        for version in [3, 2, 1] {
+            let mut legacy = trace.clone();
+            downgrade(&mut legacy, version);
+            replay_game(&legacy).unwrap();
+        }
+    }
+
+    #[test]
+    fn adaptive_jail_decisions_round_trip_and_replay_without_the_policy() {
+        let strategy = ConfigurableStrategy {
+            jail_camping_unowned_tile_threshold: Some(4),
+            ..DEX_OPTIMAL_STRATEGY
+        };
+        let trace = record_game(DEX_RULESET, vec![strategy; 4], 3, 1000).unwrap();
+        assert!(trace.decisions.iter().any(|decision| decision.request["method"] == "choose_jail_action"));
+        let mut restored: GameTrace = serde_json::from_str(&serde_json::to_string(&trace).unwrap()).unwrap();
+        assert_eq!(restored.strategies, vec![strategy; 4]);
+        restored.strategies = vec![BASELINE_STRATEGY; 4];
+        replay_game(&restored).unwrap();
+    }
+
+    #[test]
+    fn replay_uses_recorded_liquidation_instead_of_current_policy() {
+        let strategy = ConfigurableStrategy {
+            mortgages_before_selling_buildings: true,
+            ..BASELINE_STRATEGY
+        };
+        let mut trace = record_game(DEX_RULESET, vec![strategy; 4], 3, 1000).unwrap();
+        assert!(trace.decisions.iter().any(|decision| decision.request["method"] == "choose_liquidation_action"));
+        trace.strategies = vec![BASELINE_STRATEGY; 4];
         replay_game(&trace).unwrap();
     }
 

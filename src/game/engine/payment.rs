@@ -1,10 +1,5 @@
 use super::auction::run_auction;
-use super::improvement::find_most_improved_property;
-use super::liquidation::{
-    LiquidationAction,
-    execute_liquidation_action,
-    legal_liquidation_actions,
-};
+use super::liquidation::execute_liquidation_action;
 use super::mortgage::calculate_mortgage_transfer_interest;
 use super::trade::run_trade_phase;
 use crate::game::board::model::PlayerId;
@@ -93,9 +88,7 @@ fn raise_cash<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let player_index = player_id as usize;
 
     while game_state.cash_by_player_id[player_index] < required_amount {
-        let action = find_most_improved_property(game_state, player_id)
-            .map(LiquidationAction::SellBuilding)
-            .or_else(|| legal_liquidation_actions(game_state, ruleset, player_id).next());
+        let action = strategy.choose_liquidation_action(game_state, ruleset, player_id, required_amount);
         let Some(action) = action else {
             break;
         };

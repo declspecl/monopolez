@@ -17,6 +17,16 @@ pub enum JailAction {
 }
 
 pub trait PlayerStrategy {
+    fn choose_liquidation_action<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        _required_amount: Cash,
+    ) -> Option<crate::game::engine::liquidation::LiquidationAction> {
+        crate::game::engine::liquidation::default_liquidation_action(state, rules, player)
+    }
+
     fn choose_management_action<const N: usize>(
         &mut self,
         state: &GameState<N>,

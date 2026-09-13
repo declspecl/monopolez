@@ -30,6 +30,16 @@ pub enum AnyStrategy {
 }
 
 impl PlayerStrategy for AnyStrategy {
+    fn choose_liquidation_action<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        required_amount: Cash,
+    ) -> Option<crate::game::engine::liquidation::LiquidationAction> {
+        delegate_to_strategy!(self, choose_liquidation_action, state, rules, player, required_amount)
+    }
+
     fn should_purchase_property<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,

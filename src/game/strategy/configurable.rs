@@ -15,6 +15,7 @@ use crate::game::state::model::GameState;
 use crate::game::tile::data::PROPERTY_COUNT;
 use crate::game::tile::lut::{
     HOUSE_PURCHASE_PRICE_BY_TILE_ID,
+    OWNABLE_TILE_SET_MASK,
     PURCHASE_PRICE_BY_TILE_ID,
     TILE_ID_BY_PROPERTY_ID,
     TILE_SET_MASK_BY_OWNERSHIP_GROUP,
@@ -40,6 +41,10 @@ pub struct ConfigurableStrategy {
     pub trade_offer_percent: Cash,
     pub trade_accept_percent: Cash,
     pub pays_bail_when_affordable: bool,
+    #[serde(default)]
+    pub mortgages_before_selling_buildings: bool,
+    #[serde(default, alias = "camps_in_jail_below_unowned_tile_count")]
+    pub jail_camping_unowned_tile_threshold: Option<u8>,
 }
 
 impl ConfigurableStrategy {
@@ -53,6 +58,8 @@ impl ConfigurableStrategy {
             trade_offer_percent: 150,
             trade_accept_percent: 100,
             pays_bail_when_affordable: false,
+            mortgages_before_selling_buildings: false,
+            jail_camping_unowned_tile_threshold: None,
         }
     }
 
@@ -72,6 +79,26 @@ impl Default for ConfigurableStrategy {
 }
 
 impl PlayerStrategy for ConfigurableStrategy {
+    fn choose_liquidation_action<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        _required_amount: Cash,
+    ) -> Option<crate::game::engine::liquidation::LiquidationAction> {
+        use crate::game::engine::liquidation::{
+            LiquidationAction,
+            default_liquidation_action,
+            legal_liquidation_actions,
+        };
+        if self.mortgages_before_selling_buildings
+            && let Some(action) = legal_liquidation_actions(state, rules, player).find(|action| matches!(action, LiquidationAction::Mortgage(_)))
+        {
+            return Some(action);
+        }
+        default_liquidation_action(state, rules, player)
+    }
+
     fn should_purchase_property<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
@@ -104,12 +131,22 @@ impl PlayerStrategy for ConfigurableStrategy {
         ruleset: &Ruleset,
         player_id: PlayerId,
     ) -> JailAction {
+        if let Some(threshold) = self.jail_camping_unowned_tile_threshold {
+            let owned_tiles = game_state.board.owned_tiles_by_player_id.iter().fold(0, |owned_tiles, player_tiles| owned_tiles | player_tiles);
+            let unowned_tile_count = (OWNABLE_TILE_SET_MASK & !owned_tiles).count_ones();
+            if unowned_tile_count <= u32::from(threshold) {
+                return JailAction::RollForDoubles;
+            }
+        }
+
         if game_state.get_out_of_jail_free_card_holder_by_deck_kind.contains(&Some(player_id)) {
             return JailAction::UseGetOutOfJailFreeCard;
         }
 
+        let should_pay_bail = self.jail_camping_unowned_tile_threshold.is_some() || self.pays_bail_when_affordable;
         let jail_bail_amount = ruleset.jail_bail_amount as Cash;
-        if self.pays_bail_when_affordable && game_state.cash_by_player_id[player_id as usize] >= jail_bail_amount + self.cash_reserve {
+        let available_cash = game_state.cash_by_player_id[player_id as usize].checked_sub(self.cash_reserve);
+        if should_pay_bail && available_cash.is_some_and(|cash| cash >= jail_bail_amount) {
             return JailAction::PayBail;
         }
 
@@ -226,5 +263,120 @@ impl PlayerStrategy for ConfigurableStrategy {
         let given_value = trade_offer.requested_cash + calculate_tile_set_purchase_value(trade_offer.requested_tiles);
 
         received_value * PERCENT_DIVISOR > given_value * self.trade_accept_percent
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::engine::action::validate_jail_action;
+    use crate::game::engine::movement::send_player_to_jail;
+    use crate::game::ruleset::data::DEX_RULESET;
+
+    #[test]
+    fn adaptive_jail_threshold_is_inclusive_and_counts_all_players() {
+        for rules in [Ruleset::default(), DEX_RULESET] {
+            for threshold in [0, 4, OWNABLE_TILE_SET_MASK.count_ones() as u8, u8::MAX] {
+                let mut strategy = ConfigurableStrategy {
+                    jail_camping_unowned_tile_threshold: Some(threshold),
+                    ..ConfigurableStrategy::new()
+                };
+                let mut state = GameState::<2>::create_starting_state(&rules, 0);
+                send_player_to_jail(&mut state, 0);
+                for unowned_tile_count in 0..=OWNABLE_TILE_SET_MASK.count_ones() {
+                    let mut owned_tiles = OWNABLE_TILE_SET_MASK;
+                    for _ in 0..unowned_tile_count {
+                        owned_tiles &= owned_tiles - 1;
+                    }
+                    state.board.owned_tiles_by_player_id = [owned_tiles & 0x5555555555, owned_tiles & 0xaaaaaaaaaa];
+                    let expected = if unowned_tile_count <= u32::from(threshold) {
+                        JailAction::RollForDoubles
+                    } else {
+                        JailAction::PayBail
+                    };
+                    let action = strategy.choose_jail_action(&state, &rules, 0);
+                    assert_eq!(action, expected);
+                    assert_eq!(validate_jail_action(&state, &rules, 0, action), Ok(()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adaptive_jail_policy_preserves_cards_while_camping() {
+        let rules = Ruleset::default();
+        let mut strategy = ConfigurableStrategy {
+            jail_camping_unowned_tile_threshold: Some(4),
+            ..ConfigurableStrategy::new()
+        };
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        send_player_to_jail(&mut state, 0);
+        for deck in 0..state.get_out_of_jail_free_card_holder_by_deck_kind.len() {
+            state.get_out_of_jail_free_card_holder_by_deck_kind = [None; 2];
+            state.get_out_of_jail_free_card_holder_by_deck_kind[deck] = Some(0);
+            state.board.owned_tiles_by_player_id = [0; 2];
+            assert_eq!(strategy.choose_jail_action(&state, &rules, 0), JailAction::UseGetOutOfJailFreeCard);
+            state.board.owned_tiles_by_player_id[1] = OWNABLE_TILE_SET_MASK;
+            let original = state;
+            let action = strategy.choose_jail_action(&state, &rules, 0);
+            assert_eq!(action, JailAction::RollForDoubles);
+            assert_eq!(validate_jail_action(&state, &rules, 0, action), Ok(()));
+            assert_eq!(state, original);
+        }
+    }
+
+    #[test]
+    fn jail_bail_respects_reserves_without_overflow() {
+        for rules in [Ruleset::default(), DEX_RULESET] {
+            for threshold in [None, Some(4)] {
+                let mut strategy = ConfigurableStrategy {
+                    pays_bail_when_affordable: true,
+                    jail_camping_unowned_tile_threshold: threshold,
+                    ..ConfigurableStrategy::new()
+                };
+                let mut state = GameState::<2>::create_starting_state(&rules, 0);
+                send_player_to_jail(&mut state, 0);
+                state.cash_by_player_id[0] = strategy.cash_reserve + rules.jail_bail_amount as Cash;
+                assert_eq!(strategy.choose_jail_action(&state, &rules, 0), JailAction::PayBail);
+                state.cash_by_player_id[0] -= 1;
+                assert_eq!(strategy.choose_jail_action(&state, &rules, 0), JailAction::RollForDoubles);
+                strategy.cash_reserve = Cash::MAX;
+                state.cash_by_player_id[0] = Cash::MAX;
+                assert_eq!(strategy.choose_jail_action(&state, &rules, 0), JailAction::RollForDoubles);
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_adaptive_policy_preserves_existing_jail_choices() {
+        let rules = Ruleset::default();
+        let mut state = GameState::<2>::create_starting_state(&rules, 0);
+        send_player_to_jail(&mut state, 0);
+        state.board.owned_tiles_by_player_id[1] = OWNABLE_TILE_SET_MASK;
+        for pays_bail_when_affordable in [false, true] {
+            let mut strategy = ConfigurableStrategy {
+                pays_bail_when_affordable,
+                ..ConfigurableStrategy::new()
+            };
+            state.get_out_of_jail_free_card_holder_by_deck_kind = [None; 2];
+            let expected = if pays_bail_when_affordable { JailAction::PayBail } else { JailAction::RollForDoubles };
+            assert_eq!(strategy.choose_jail_action(&state, &rules, 0), expected);
+            state.get_out_of_jail_free_card_holder_by_deck_kind[0] = Some(0);
+            assert_eq!(strategy.choose_jail_action(&state, &rules, 0), JailAction::UseGetOutOfJailFreeCard);
+        }
+    }
+
+    #[test]
+    fn jail_policy_json_preserves_old_inputs_and_round_trips() {
+        let mut value = serde_json::to_value(ConfigurableStrategy::new()).unwrap();
+        value.as_object_mut().unwrap().remove("jail_camping_unowned_tile_threshold");
+        let strategy: ConfigurableStrategy = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(strategy.jail_camping_unowned_tile_threshold, None);
+        value["camps_in_jail_below_unowned_tile_count"] = serde_json::json!(4);
+        let strategy: ConfigurableStrategy = serde_json::from_value(value).unwrap();
+        assert_eq!(strategy.jail_camping_unowned_tile_threshold, Some(4));
+        let serialized = serde_json::to_value(strategy).unwrap();
+        assert!(serialized.get("camps_in_jail_below_unowned_tile_count").is_none());
+        assert_eq!(serde_json::from_value::<ConfigurableStrategy>(serialized).unwrap(), strategy);
     }
 }
