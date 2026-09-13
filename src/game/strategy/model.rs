@@ -22,7 +22,7 @@ pub trait PlayerStrategy {
         state: &GameState<N>,
         rules: &Ruleset,
         player: PlayerId,
-        legal: &crate::game::engine::action::LegalManagementActions,
+        legal: &crate::game::engine::action::LegalManagementActions<'_, N>,
     ) -> Option<crate::game::engine::action::ManagementAction> {
         use crate::game::engine::action::{
             ManagementAction,
@@ -32,7 +32,7 @@ pub trait PlayerStrategy {
             ManagementPhase::Building => self.choose_property_to_improve(state, rules, player).map(ManagementAction::Build),
             ManagementPhase::Unmortgaging => self.choose_tile_to_unmortgage(state, rules, player).map(ManagementAction::Unmortgage),
         };
-        action.filter(|action| legal.iter().any(|candidate| candidate == *action))
+        action.filter(|action| legal.contains(*action))
     }
 
     fn record_event(

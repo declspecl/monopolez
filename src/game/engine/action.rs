@@ -41,21 +41,43 @@ pub enum ManagementPhase {
     Unmortgaging,
 }
 
-pub struct LegalManagementActions {
+pub struct LegalManagementActions<'a, const N: usize> {
     phase: ManagementPhase,
-    mask: u64,
+    state: &'a GameState<N>,
+    rules: &'a Ruleset,
+    player: PlayerId,
 }
 
-impl LegalManagementActions {
+impl<const N: usize> LegalManagementActions<'_, N> {
     pub const fn phase(&self) -> ManagementPhase {
         self.phase
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ManagementAction> + '_ {
-        (0..TILE_COUNT as u8).filter(|id| self.mask & (1u64 << id) != 0).map(|id| match self.phase {
-            ManagementPhase::Building => ManagementAction::Build(id),
-            ManagementPhase::Unmortgaging => ManagementAction::Unmortgage(id),
-        })
+        let count = match self.phase {
+            ManagementPhase::Building => PROPERTY_COUNT,
+            ManagementPhase::Unmortgaging => TILE_COUNT,
+        };
+        (0..count as u8)
+            .map(|id| match self.phase {
+                ManagementPhase::Building => ManagementAction::Build(id),
+                ManagementPhase::Unmortgaging => ManagementAction::Unmortgage(id),
+            })
+            .filter(|action| self.contains(*action))
+    }
+
+    pub fn contains(
+        &self,
+        action: ManagementAction,
+    ) -> bool {
+        if self.player as usize >= N || self.state.bankrupt_players & (1 << self.player) != 0 || self.state.current_player_id != self.player {
+            return false;
+        }
+        match (self.phase, action) {
+            (ManagementPhase::Building, ManagementAction::Build(property)) => can_improve_property(self.state, self.rules, self.player, property),
+            (ManagementPhase::Unmortgaging, ManagementAction::Unmortgage(tile)) => can_unmortgage_tile(self.state, self.player, tile),
+            _ => false,
+        }
     }
 }
 
@@ -171,30 +193,13 @@ pub fn execute_purchase<const N: usize>(
     })
 }
 
-pub fn legal_management_actions<const N: usize>(
-    state: &GameState<N>,
-    rules: &Ruleset,
+pub fn legal_management_actions<'a, const N: usize>(
+    state: &'a GameState<N>,
+    rules: &'a Ruleset,
     player: PlayerId,
     phase: ManagementPhase,
-) -> LegalManagementActions {
-    let mut mask = 0;
-    if player as usize >= N || state.bankrupt_players & (1 << player) != 0 || state.current_player_id != player {
-        return LegalManagementActions { phase, mask };
-    }
-    let count = match phase {
-        ManagementPhase::Building => PROPERTY_COUNT,
-        ManagementPhase::Unmortgaging => TILE_COUNT,
-    };
-    for id in 0..count as u8 {
-        let legal = match phase {
-            ManagementPhase::Building => can_improve_property(state, rules, player, id),
-            ManagementPhase::Unmortgaging => can_unmortgage_tile(state, player, id),
-        };
-        if legal {
-            mask |= 1 << id;
-        }
-    }
-    LegalManagementActions { phase, mask }
+) -> LegalManagementActions<'a, N> {
+    LegalManagementActions { phase, state, rules, player }
 }
 
 pub fn execute_management_action<const N: usize>(
@@ -325,12 +330,10 @@ mod tests {
         state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
         let legal = legal_management_actions(&state, &rules, 0, ManagementPhase::Building);
         assert_eq!(legal.iter().collect::<Vec<_>>(), vec![ManagementAction::Build(0), ManagementAction::Build(1)]);
+        let selected = legal.iter().next().unwrap();
         state.cash_by_player_id[0] = 0;
         let original = state;
-        assert_eq!(
-            execute_management_action(&mut state, &rules, 0, ManagementPhase::Building, legal.iter().next().unwrap()),
-            Err(ActionError::IllegalAction)
-        );
+        assert_eq!(execute_management_action(&mut state, &rules, 0, ManagementPhase::Building, selected), Err(ActionError::IllegalAction));
         assert_eq!(state, original);
     }
 
