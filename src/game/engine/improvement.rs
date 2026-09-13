@@ -31,15 +31,20 @@ pub fn run_improvement_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy
     strategies: &mut [Strategy; PLAYER_COUNT],
     player_id: PlayerId,
 ) {
-    while let Some(property_id) = strategies[player_id as usize].choose_property_to_improve(game_state, ruleset, player_id) {
-        if !improve_property(game_state, ruleset, player_id, property_id) {
+    loop {
+        use super::action::{
+            ManagementPhase,
+            execute_management_action,
+            legal_management_actions,
+        };
+        let legal = legal_management_actions(game_state, ruleset, player_id, ManagementPhase::Building);
+        let Some(action) = strategies[player_id as usize].choose_management_action(game_state, ruleset, player_id, &legal) else {
             return;
-        }
-        strategies[player_id as usize].record_event(super::event::GameEvent::BuildingPurchased {
-            player_id,
-            property_id,
-            level: game_state.board.improvement_level_by_property_id[property_id as usize],
-        });
+        };
+        let Ok(event) = execute_management_action(game_state, ruleset, player_id, ManagementPhase::Building, action) else {
+            return;
+        };
+        strategies[player_id as usize].record_event(event);
     }
 }
 

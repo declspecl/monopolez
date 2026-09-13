@@ -17,6 +17,24 @@ pub enum JailAction {
 }
 
 pub trait PlayerStrategy {
+    fn choose_management_action<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        legal: &crate::game::engine::action::LegalManagementActions,
+    ) -> Option<crate::game::engine::action::ManagementAction> {
+        use crate::game::engine::action::{
+            ManagementAction,
+            ManagementPhase,
+        };
+        let action = match legal.phase() {
+            ManagementPhase::Building => self.choose_property_to_improve(state, rules, player).map(ManagementAction::Build),
+            ManagementPhase::Unmortgaging => self.choose_tile_to_unmortgage(state, rules, player).map(ManagementAction::Unmortgage),
+        };
+        action.filter(|action| legal.iter().any(|candidate| candidate == *action))
+    }
+
     fn record_event(
         &mut self,
         _event: crate::game::engine::event::GameEvent,

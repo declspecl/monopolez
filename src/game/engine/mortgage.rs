@@ -21,11 +21,20 @@ pub fn run_mortgage_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     strategies: &mut [Strategy; PLAYER_COUNT],
     player_id: PlayerId,
 ) {
-    while let Some(tile_id) = strategies[player_id as usize].choose_tile_to_unmortgage(game_state, ruleset, player_id) {
-        if !unmortgage_tile(game_state, player_id, tile_id) {
+    loop {
+        use super::action::{
+            ManagementPhase,
+            execute_management_action,
+            legal_management_actions,
+        };
+        let legal = legal_management_actions(game_state, ruleset, player_id, ManagementPhase::Unmortgaging);
+        let Some(action) = strategies[player_id as usize].choose_management_action(game_state, ruleset, player_id, &legal) else {
             return;
-        }
-        strategies[player_id as usize].record_event(super::event::GameEvent::TileUnmortgaged { player_id, tile_id });
+        };
+        let Ok(event) = execute_management_action(game_state, ruleset, player_id, ManagementPhase::Unmortgaging, action) else {
+            return;
+        };
+        strategies[player_id as usize].record_event(event);
     }
 }
 
