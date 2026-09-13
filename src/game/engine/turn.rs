@@ -42,6 +42,17 @@ pub struct GameSummary {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TurnPhase {
+    Start,
+    Unmortgaging,
+    Building,
+    Jail,
+    Rolling,
+    End,
+    Finished,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum JailTurnResult {
     StayInJail,
     RollNormally,
@@ -79,58 +90,76 @@ pub fn play_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     ruleset: &Ruleset,
     strategies: &mut [Strategy; PLAYER_COUNT],
 ) {
+    let mut phase = TurnPhase::Start;
+    while phase != TurnPhase::Finished {
+        phase = advance_turn(game_state, ruleset, strategies, phase);
+    }
+}
+
+pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
+    game_state: &mut GameState<PLAYER_COUNT>,
+    ruleset: &Ruleset,
+    strategies: &mut [Strategy; PLAYER_COUNT],
+    phase: TurnPhase,
+) -> TurnPhase {
     let player_id = game_state.current_player_id;
-    strategies[player_id as usize].record_event(super::event::GameEvent::TurnStarted { player_id });
-
-    run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
-    run_mortgage_phase(game_state, ruleset, strategies, player_id);
-    run_improvement_phase(game_state, ruleset, strategies, player_id);
-
-    if game_state.jailed_players & (1 << player_id) != 0 {
-        match take_jail_turn(game_state, ruleset, strategies, player_id) {
-            JailTurnResult::StayInJail => {
-                end_turn(game_state);
-
-                return;
-            },
-            JailTurnResult::MoveWithoutRollingAgain(dice_roll) => {
-                move_player_forward(game_state, ruleset, player_id, dice_roll.total());
-                resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
-                end_turn(game_state);
-
-                return;
-            },
-            JailTurnResult::RollNormally => {},
-        }
-    }
-
-    loop {
-        let dice_roll = game_state.rng.roll_dice();
-        strategies[player_id as usize].record_event(super::event::GameEvent::DiceRolled {
-            player_id,
-            first: dice_roll.first_die,
-            second: dice_roll.second_die,
-        });
-
-        if dice_roll.is_double() {
-            game_state.consecutive_double_count += 1;
-            if game_state.consecutive_double_count == MAX_CONSECUTIVE_DOUBLE_COUNT {
-                send_player_to_jail(game_state, player_id);
-                break;
+    match phase {
+        TurnPhase::Start => {
+            strategies[player_id as usize].record_event(super::event::GameEvent::TurnStarted { player_id });
+            run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
+            TurnPhase::Unmortgaging
+        },
+        TurnPhase::Unmortgaging => {
+            run_mortgage_phase(game_state, ruleset, strategies, player_id);
+            TurnPhase::Building
+        },
+        TurnPhase::Building => {
+            run_improvement_phase(game_state, ruleset, strategies, player_id);
+            TurnPhase::Jail
+        },
+        TurnPhase::Jail => {
+            if game_state.jailed_players & (1 << player_id) == 0 {
+                return TurnPhase::Rolling;
             }
-        }
+            match take_jail_turn(game_state, ruleset, strategies, player_id) {
+                JailTurnResult::StayInJail => TurnPhase::End,
+                JailTurnResult::MoveWithoutRollingAgain(dice_roll) => {
+                    move_player_forward(game_state, ruleset, player_id, dice_roll.total());
+                    resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
+                    TurnPhase::End
+                },
+                JailTurnResult::RollNormally => TurnPhase::Rolling,
+            }
+        },
+        TurnPhase::Rolling => {
+            let dice_roll = game_state.rng.roll_dice();
+            strategies[player_id as usize].record_event(super::event::GameEvent::DiceRolled {
+                player_id,
+                first: dice_roll.first_die,
+                second: dice_roll.second_die,
+            });
 
-        move_player_forward(game_state, ruleset, player_id, dice_roll.total());
-        resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
+            if dice_roll.is_double() {
+                game_state.consecutive_double_count += 1;
+                if game_state.consecutive_double_count == MAX_CONSECUTIVE_DOUBLE_COUNT {
+                    send_player_to_jail(game_state, player_id);
+                    return TurnPhase::End;
+                }
+            }
 
-        let is_bankrupt = game_state.bankrupt_players & (1 << player_id) != 0;
-        let is_jailed = game_state.jailed_players & (1 << player_id) != 0;
-        if !dice_roll.is_double() || is_bankrupt || is_jailed {
-            break;
-        }
+            move_player_forward(game_state, ruleset, player_id, dice_roll.total());
+            resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
+
+            let is_bankrupt = game_state.bankrupt_players & (1 << player_id) != 0;
+            let is_jailed = game_state.jailed_players & (1 << player_id) != 0;
+            if !dice_roll.is_double() || is_bankrupt || is_jailed { TurnPhase::End } else { TurnPhase::Rolling }
+        },
+        TurnPhase::End => {
+            end_turn(game_state);
+            TurnPhase::Finished
+        },
+        TurnPhase::Finished => TurnPhase::Finished,
     }
-
-    end_turn(game_state);
 }
 
 fn take_jail_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
@@ -206,6 +235,44 @@ mod tests {
 
     fn create_strategies() -> [GreedyStrategy; PLAYER_COUNT] {
         [GreedyStrategy { cash_reserve: 100 }; PLAYER_COUNT]
+    }
+
+    #[test]
+    fn resuming_at_each_phase_preserves_the_complete_turn() {
+        use crate::game::strategy::configurable::ConfigurableStrategy;
+        for rules in [Ruleset::default(), crate::game::ruleset::data::DEX_RULESET] {
+            for seed in 0..32 {
+                let mut state = GameState::<4>::create_starting_state(&rules, seed);
+                let mut strategies = [ConfigurableStrategy::new(); 4];
+                if seed % 2 == 0 {
+                    send_player_to_jail(&mut state, 0);
+                }
+                for _ in 0..30 {
+                    let mut expected = state;
+                    let mut expected_strategies = strategies;
+                    play_turn(&mut expected, &rules, &mut expected_strategies);
+                    let mut phase = TurnPhase::Start;
+                    while phase != TurnPhase::Finished {
+                        let mut fork = state;
+                        let mut fork_strategies = strategies;
+                        let mut fork_phase = phase;
+                        while fork_phase != TurnPhase::Finished {
+                            fork_phase = advance_turn(&mut fork, &rules, &mut fork_strategies, fork_phase);
+                        }
+                        assert_eq!(fork, expected, "seed {seed}, phase {phase:?}");
+                        assert_eq!(fork_strategies, expected_strategies);
+                        phase = advance_turn(&mut state, &rules, &mut strategies, phase);
+                    }
+                    assert_eq!(state, expected);
+                    let finished = state;
+                    assert_eq!(advance_turn(&mut state, &rules, &mut strategies, phase), TurnPhase::Finished);
+                    assert_eq!(state, finished);
+                    if state.bankrupt_players.count_ones() == 3 {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     #[test]
