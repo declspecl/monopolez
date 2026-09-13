@@ -25,7 +25,6 @@ use crate::game::tile::lut::{
     ONE_HOUSE_RENT_LEVEL,
     OWNERSHIP_GROUP_BY_TILE_ID,
     PROPERTY_ID_BY_TILE_ID,
-    PURCHASE_PRICE_BY_TILE_ID,
     RAILROAD_TILE_SET_MASK,
     RENT_BY_TILE_ID_BY_RENT_LEVEL,
     TAX_AMOUNT_BY_TILE_ID,
@@ -108,19 +107,14 @@ fn offer_purchase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     tile_id: TileId,
 ) {
     let player_index = player_id as usize;
-    let purchase_price = PURCHASE_PRICE_BY_TILE_ID[tile_id as usize] as Cash;
-    let can_afford = game_state.cash_by_player_id[player_index] >= purchase_price;
-
-    if can_afford && strategies[player_index].should_purchase_property(game_state, ruleset, player_id, tile_id) {
-        game_state.cash_by_player_id[player_index] -= purchase_price;
-        game_state.board.owned_tiles_by_player_id[player_index] |= 1 << tile_id;
-        strategies[player_index].record_event(super::event::GameEvent::PropertyPurchased {
-            player_id,
-            tile_id,
-            price: purchase_price,
-            auction: false,
-        });
-    } else if ruleset.property_purchase_decline_mode == PropertyPurchaseDeclineMode::Auction {
+    if super::action::validate_purchase(game_state, player_id, tile_id).is_ok()
+        && strategies[player_index].should_purchase_property(game_state, ruleset, player_id, tile_id)
+        && let Ok(event) = super::action::execute_purchase(game_state, player_id, tile_id)
+    {
+        strategies[player_index].record_event(event);
+        return;
+    }
+    if game_state.board.get_tile_owner(tile_id).is_none() && ruleset.property_purchase_decline_mode == PropertyPurchaseDeclineMode::Auction {
         run_auction(game_state, ruleset, strategies, player_id, tile_id);
     }
 }

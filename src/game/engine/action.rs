@@ -20,6 +20,7 @@ use crate::game::tile::data::{
     TILE_COUNT,
 };
 use crate::game::tile::model::{
+    Cash,
     PropertyId,
     TileId,
 };
@@ -59,6 +60,44 @@ pub enum ActionError {
     InvalidPlayer,
     WrongPhase,
     IllegalAction,
+}
+
+pub fn validate_purchase<const N: usize>(
+    state: &GameState<N>,
+    player: PlayerId,
+    tile: TileId,
+) -> Result<Cash, ActionError> {
+    use crate::game::tile::lut::{
+        OWNABLE_TILE_SET_MASK,
+        PURCHASE_PRICE_BY_TILE_ID,
+    };
+    if player as usize >= N || state.bankrupt_players & (1 << player) != 0 || state.current_player_id != player {
+        return Err(ActionError::InvalidPlayer);
+    }
+    if tile as usize >= TILE_COUNT || OWNABLE_TILE_SET_MASK & (1 << tile) == 0 || state.position_by_player_id[player as usize] != tile || state.board.get_tile_owner(tile).is_some() {
+        return Err(ActionError::IllegalAction);
+    }
+    let price = PURCHASE_PRICE_BY_TILE_ID[tile as usize] as Cash;
+    if state.cash_by_player_id[player as usize] < price {
+        return Err(ActionError::IllegalAction);
+    }
+    Ok(price)
+}
+
+pub fn execute_purchase<const N: usize>(
+    state: &mut GameState<N>,
+    player: PlayerId,
+    tile: TileId,
+) -> Result<GameEvent, ActionError> {
+    let price = validate_purchase(state, player, tile)?;
+    state.cash_by_player_id[player as usize] -= price;
+    state.board.owned_tiles_by_player_id[player as usize] |= 1 << tile;
+    Ok(GameEvent::PropertyPurchased {
+        player_id: player,
+        tile_id: tile,
+        price,
+        auction: false,
+    })
 }
 
 pub fn legal_management_actions<const N: usize>(
@@ -121,6 +160,47 @@ pub fn execute_management_action<const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn purchases_require_current_location_ownership_and_cash() {
+        let mut state = GameState::<2>::create_starting_state(&Ruleset::default(), 0);
+        state.position_by_player_id[0] = 1;
+        let original = state;
+        for (player, tile) in [(255, 1), (1, 1), (0, 255), (0, 0), (0, 3)] {
+            assert!(execute_purchase(&mut state, player, tile).is_err());
+            assert_eq!(state, original);
+        }
+        state.cash_by_player_id[0] = 59;
+        let poor_state = state;
+        assert!(execute_purchase(&mut state, 0, 1).is_err());
+        assert_eq!(state, poor_state);
+        state.cash_by_player_id[0] = 60;
+        assert_eq!(
+            execute_purchase(&mut state, 0, 1),
+            Ok(GameEvent::PropertyPurchased {
+                player_id: 0,
+                tile_id: 1,
+                price: 60,
+                auction: false
+            })
+        );
+        assert_eq!(state.cash_by_player_id[0], 0);
+        state.cash_by_player_id[0] = 60;
+        let bought_state = state;
+        assert!(execute_purchase(&mut state, 0, 1).is_err());
+        assert_eq!(state, bought_state);
+    }
+
+    #[test]
+    fn stale_purchase_cannot_take_another_players_property() {
+        let mut state = GameState::<2>::create_starting_state(&Ruleset::default(), 0);
+        state.position_by_player_id[0] = 1;
+        assert!(validate_purchase(&state, 0, 1).is_ok());
+        state.board.owned_tiles_by_player_id[1] |= 1 << 1;
+        let original = state;
+        assert!(execute_purchase(&mut state, 0, 1).is_err());
+        assert_eq!(state, original);
+    }
 
     #[test]
     fn stale_actions_are_revalidated_before_execution() {
