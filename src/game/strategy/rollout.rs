@@ -25,7 +25,7 @@ use crate::game::state::model::{
     PlayerSetMask,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 pub enum RolloutDecision {
     Building,
     Unmortgaging,
@@ -50,9 +50,40 @@ pub enum RolloutAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct RolloutConfig {
+    pub decisions: RolloutDecisions,
     pub seed: u64,
     pub sample_count: u32,
     pub max_turn_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RolloutDecisions {
+    pub building: bool,
+    pub unmortgaging: bool,
+    pub jail: bool,
+}
+
+impl Default for RolloutDecisions {
+    fn default() -> Self {
+        Self {
+            building: true,
+            unmortgaging: true,
+            jail: true,
+        }
+    }
+}
+
+impl RolloutDecisions {
+    pub fn enabled(
+        self,
+        decision: RolloutDecision,
+    ) -> bool {
+        match decision {
+            RolloutDecision::Building => self.building,
+            RolloutDecision::Unmortgaging => self.unmortgaging,
+            RolloutDecision::Jail => self.jail,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -188,6 +219,7 @@ mod tests {
         state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
         let observation = PublicObservation::new(&state, &DEX_RULESET, 0, &[]);
         let config = RolloutConfig {
+            decisions: Default::default(),
             seed: u64::MAX - 2,
             sample_count: 4,
             max_turn_count: 20,
@@ -230,6 +262,7 @@ mod tests {
         state.board.owned_tiles_by_player_id[0] = 1 << 5;
         state.board.mortgaged_tiles = 1 << 5;
         let config = RolloutConfig {
+            decisions: Default::default(),
             seed: 4,
             sample_count: 3,
             max_turn_count: 1,

@@ -11,6 +11,29 @@ fn run_json(arguments: &[&str]) -> serde_json::Value {
 }
 
 #[test]
+fn rollout_decision_selection_is_explicit_and_validated() {
+    let output = run_json(&[
+        "--vs-pool",
+        "--rollout",
+        "--json",
+        "--rollout-decisions",
+        "building,jail",
+        "--game-count",
+        "1",
+        "--max-turn-count",
+        "1",
+        "--rollout-samples",
+        "1",
+        "--rollout-turns",
+        "1",
+    ]);
+    assert_eq!(output["rollout"]["decisions"], serde_json::json!({"building": true, "unmortgaging": false, "jail": true}));
+    for arguments in [vec!["--rollout-decisions", "jail"], vec!["--vs-pool", "--rollout", "--rollout-decisions", "unknown"]] {
+        assert!(!Command::new(env!("CARGO_BIN_EXE_monopolez")).args(arguments).output().unwrap().status.success());
+    }
+}
+
+#[test]
 fn rollout_cli_reports_paired_results_cost_and_resolved_settings() {
     let output = run_json(&[
         "--vs-pool",
@@ -33,6 +56,7 @@ fn rollout_cli_reports_paired_results_cost_and_resolved_settings() {
     assert_eq!(output["rollout"]["seed"], 19);
     assert_eq!(output["rollout"]["sample_count"], 2);
     assert_eq!(output["rollout"]["max_turn_count"], 1);
+    assert_eq!(output["rollout"]["decisions"], serde_json::json!({"building": true, "unmortgaging": true, "jail": true}));
     assert_eq!(output["continuation_model"], "candidate_baseline_for_all_seats");
     assert_eq!(output["report"]["paired"]["candidate"]["game_count"], 2);
     assert_eq!(output["report"]["paired"]["baseline"]["game_count"], 2);

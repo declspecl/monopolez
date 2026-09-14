@@ -132,6 +132,7 @@ mod tests {
             player_count: 2,
         };
         let rollout = RolloutConfig {
+            decisions: Default::default(),
             seed: 19,
             sample_count: 2,
             max_turn_count: 1,

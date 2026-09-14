@@ -82,6 +82,9 @@ impl RolloutStrategy {
         let Some(mut config) = self.config else {
             return baseline;
         };
+        if !config.decisions.enabled(decision) {
+            return baseline;
+        }
         config.seed = config.seed.wrapping_add(self.stats.decisions.wrapping_mul(config.sample_count as u64));
         self.stats.decisions += 1;
         let observation = PublicObservation::new(state, rules, player, &self.history);
@@ -179,6 +182,38 @@ mod tests {
     use crate::game::ruleset::data::DEX_RULESET;
 
     #[test]
+    fn decision_switches_only_evaluate_enabled_phases() {
+        use super::super::rollout::RolloutDecisions;
+        for mask in 0u8..8 {
+            let mut state = GameState::<2>::create_starting_state(&DEX_RULESET, 3);
+            state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3) | (1 << 5);
+            state.board.mortgaged_tiles = 1 << 5;
+            let config = RolloutConfig {
+                seed: 17,
+                sample_count: 2,
+                max_turn_count: 1,
+                decisions: RolloutDecisions {
+                    building: mask & 1 != 0,
+                    unmortgaging: mask & 2 != 0,
+                    jail: mask & 4 != 0,
+                },
+            };
+            let mut player = RolloutStrategy::new(ConfigurableStrategy::new(), Some(config));
+            for phase in [ManagementPhase::Building, ManagementPhase::Unmortgaging] {
+                let legal = legal_management_actions(&state, &DEX_RULESET, 0, phase);
+                let expected = ConfigurableStrategy::new().choose_management_action(&state, &DEX_RULESET, 0, &legal);
+                assert_eq!(player.choose_management_action(&state, &DEX_RULESET, 0, &legal), expected);
+            }
+            crate::game::engine::movement::send_player_to_jail(&mut state, 0);
+            let expected = ConfigurableStrategy::new().choose_jail_action(&state, &DEX_RULESET, 0);
+            assert_eq!(player.choose_jail_action(&state, &DEX_RULESET, 0), expected);
+            assert_eq!(player.stats.decisions, mask.count_ones() as u64);
+            assert_eq!(player.stats.changed_decisions, 0);
+            assert_eq!(player.stats.failures, 0);
+        }
+    }
+
+    #[test]
     fn tied_unfinished_rollouts_retain_baseline_and_track_cost() {
         let mut state = GameState::<2>::create_starting_state(&DEX_RULESET, 3);
         state.board.owned_tiles_by_player_id[0] = (1 << 1) | (1 << 3);
@@ -188,6 +223,7 @@ mod tests {
         let mut player = RolloutStrategy::new(
             baseline,
             Some(RolloutConfig {
+                decisions: Default::default(),
                 seed: 17,
                 sample_count: 2,
                 max_turn_count: 1,

@@ -119,6 +119,9 @@ struct CliArguments {
     #[arg(long, requires = "vs_pool", conflicts_with_all = ["compare_strategy_file", "analyze", "tune", "sweep", "head_to_head", "print_ruleset", "strategies", "cash_reserve", "tune_pool_file"])]
     rollout: bool,
 
+    #[arg(long, requires = "rollout", value_enum, value_delimiter = ',', default_value = "building,unmortgaging,jail")]
+    rollout_decisions: Vec<game::strategy::rollout::RolloutDecision>,
+
     #[arg(long, requires = "rollout", default_value_t = 8)]
     rollout_samples: u32,
 
@@ -368,6 +371,11 @@ fn main() -> Result<()> {
 
         if arguments.rollout {
             let rollout = game::strategy::rollout::RolloutConfig {
+                decisions: game::strategy::rollout::RolloutDecisions {
+                    building: arguments.rollout_decisions.contains(&game::strategy::rollout::RolloutDecision::Building),
+                    unmortgaging: arguments.rollout_decisions.contains(&game::strategy::rollout::RolloutDecision::Unmortgaging),
+                    jail: arguments.rollout_decisions.contains(&game::strategy::rollout::RolloutDecision::Jail),
+                },
                 seed: arguments.rollout_seed,
                 sample_count: arguments.rollout_samples,
                 max_turn_count: arguments.rollout_turns,
