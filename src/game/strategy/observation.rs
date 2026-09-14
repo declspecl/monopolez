@@ -53,7 +53,7 @@ pub struct PublicObservation<'a> {
 }
 
 impl<'a> PublicObservation<'a> {
-    fn new<const N: usize>(
+    pub(super) fn new<const N: usize>(
         state: &'a GameState<N>,
         rules: &'a Ruleset,
         player_id: PlayerId,

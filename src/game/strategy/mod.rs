@@ -1,4 +1,5 @@
 pub mod any;
+pub mod belief;
 pub mod cautious;
 pub mod configurable;
 pub mod data;
