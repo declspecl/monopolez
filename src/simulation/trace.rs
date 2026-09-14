@@ -226,7 +226,7 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 5,
+        schema_version: 6,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
@@ -250,8 +250,8 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if !(1..=5).contains(&trace.schema_version) || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1 through 5 and a positive turn limit");
+    if !(1..=6).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 through 6 and a positive turn limit");
     }
     if trace.schema_version == 1 && !trace.events.is_empty() {
         bail!("schema version 1 does not support event verification");
@@ -342,6 +342,23 @@ mod tests {
         }
         trace.events.retain(|record| record.event.trace_version() <= version);
         trace.schema_version = version;
+    }
+
+    #[test]
+    fn replay_supports_traces_before_cash_income_events() {
+        let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 7, 1000).unwrap();
+        for kind in ["SalaryPaid", "BankRewardCollected", "FreeParkingCollected"] {
+            assert!(trace.events.iter().any(|record| serde_json::to_value(record.event).unwrap()["kind"] == kind));
+        }
+        let mut legacy = trace.clone();
+        downgrade(&mut legacy, 5);
+        replay_game(&legacy).unwrap();
+        let mut corrupt = trace;
+        let record = corrupt.events.iter_mut().find(|record| matches!(record.event, GameEvent::SalaryPaid { .. })).unwrap();
+        if let GameEvent::SalaryPaid { amount, .. } = &mut record.event {
+            *amount += 1;
+        }
+        assert!(replay_game(&corrupt).is_err());
     }
 
     #[test]

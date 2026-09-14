@@ -180,7 +180,9 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
                 }
             }
 
-            move_player_forward(game_state, ruleset, player_id, dice_roll.total());
+            if let Some(event) = move_player_forward(game_state, ruleset, player_id, dice_roll.total()) {
+                super::event::publish_event(strategies, player_id as usize, event);
+            }
             resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
 
             let is_bankrupt = game_state.bankrupt_players & (1 << player_id) != 0;
@@ -212,7 +214,9 @@ pub fn apply_jail_decision<const N: usize, S: PlayerStrategy>(
         JailTurnResult::StayInJail => TurnPhase::End,
         JailTurnResult::RollNormally => TurnPhase::Rolling,
         JailTurnResult::MoveWithoutRollingAgain(dice_roll) => {
-            move_player_forward(state, rules, player, dice_roll.total());
+            if let Some(event) = move_player_forward(state, rules, player, dice_roll.total()) {
+                super::event::publish_event(strategies, player as usize, event);
+            }
             resolve_landing(state, rules, strategies, player, dice_roll, RentModifier::Standard);
             TurnPhase::End
         },

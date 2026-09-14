@@ -30,6 +30,20 @@ pub fn publish_event<const N: usize, S: crate::game::strategy::model::PlayerStra
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum GameEvent {
+    SalaryPaid {
+        player_id: PlayerId,
+        amount: Cash,
+        landed_on_go: bool,
+    },
+    BankRewardCollected {
+        player_id: PlayerId,
+        amount: Cash,
+        deck: DeckKind,
+    },
+    FreeParkingCollected {
+        player_id: PlayerId,
+        amount: Cash,
+    },
     SentToJail {
         player_id: PlayerId,
     },
@@ -107,6 +121,7 @@ pub enum GameEvent {
 impl GameEvent {
     pub const fn trace_version(self) -> u32 {
         match self {
+            Self::SalaryPaid { .. } | Self::BankRewardCollected { .. } | Self::FreeParkingCollected { .. } => 6,
             Self::SentToJail { .. } | Self::ReleasedFromJail { .. } | Self::JailCardUsed { .. } => 5,
             Self::BuildingSold { .. } | Self::TileMortgaged { .. } => 3,
             _ => 2,
@@ -152,6 +167,137 @@ mod tests {
 
     fn rng_for_roll(double: bool) -> crate::game::rng::WyRand {
         (0..100).map(crate::game::rng::WyRand::new).find(|rng| rng.clone().roll_dice().is_double() == double).unwrap()
+    }
+
+    #[test]
+    fn salary_is_public_before_landing_and_uses_the_resolved_rule_amount() {
+        use super::super::turn::{
+            TurnPhase,
+            advance_turn,
+        };
+        for (target, landing_salary, passing_salary) in [(0, 400, 200), (1, 400, 200), (0, 0, 200), (1, 400, 0)] {
+            let mut rules = crate::game::ruleset::data::DEX_RULESET;
+            rules.go_landing_salary = landing_salary;
+            rules.go_passing_salary = passing_salary;
+            let mut state = GameState::<2>::create_starting_state(&rules, 7);
+            let mut strategies = observers();
+            state.rng = rng_for_roll(false);
+            let roll = state.rng.clone().roll_dice();
+            state.position_by_player_id[0] = 40 - roll.total() + target;
+            state.board.owned_tiles_by_player_id[0] = 1 << 1;
+            let before = state.cash_by_player_id[0];
+            advance_turn(&mut state, &rules, &mut strategies, TurnPhase::Rolling);
+            let amount = if target == 0 { landing_salary } else { passing_salary } as Cash;
+            assert_eq!(state.cash_by_player_id[0], before + amount);
+            let mut expected = vec![GameEvent::DiceRolled {
+                player_id: 0,
+                first: roll.first_die,
+                second: roll.second_die,
+            }];
+            if amount > 0 {
+                expected.push(GameEvent::SalaryPaid {
+                    player_id: 0,
+                    amount,
+                    landed_on_go: target == 0,
+                });
+            }
+            expected.push(GameEvent::Landed { player_id: 0, tile_id: target });
+            assert_public_events(&strategies, &expected);
+        }
+    }
+
+    #[test]
+    fn card_income_matches_public_cash_changes() {
+        use super::super::card::draw_and_apply_card;
+        use crate::game::card::data::{
+            CHANCE_CARD_DEFINITIONS,
+            COMMUNITY_CHEST_CARD_DEFINITIONS,
+        };
+        let mut rules = crate::game::ruleset::data::DEX_RULESET;
+        rules.go_landing_salary = 400;
+        rules.go_passing_salary = 200;
+        for (deck, definitions) in [(DeckKind::Chance, CHANCE_CARD_DEFINITIONS), (DeckKind::CommunityChest, COMMUNITY_CHEST_CARD_DEFINITIONS)] {
+            for (card_id, card) in definitions.iter().enumerate() {
+                let (amount, target) = match card.effect {
+                    CardEffect::CollectFromBank { amount } => (amount as Cash, None),
+                    CardEffect::AdvanceToTile { tile_id } if tile_id < 36 => (if tile_id == 0 { 400 } else { 200 }, Some(tile_id)),
+                    CardEffect::AdvanceToNearestRailroad => (200, Some(5)),
+                    CardEffect::AdvanceToNearestUtility => (200, Some(12)),
+                    _ => continue,
+                };
+                let mut state = GameState::<2>::create_starting_state(&rules, 7);
+                let mut strategies = observers();
+                state.position_by_player_id[0] = 36;
+                if let Some(tile) = target {
+                    state.board.owned_tiles_by_player_id[0] = 1 << tile;
+                }
+                let deck_state = &mut state.deck_state_by_deck_kind[deck as usize];
+                deck_state.next_draw_position = deck_state.card_id_by_draw_position.iter().position(|id| *id as usize == card_id).unwrap() as u8;
+                let before = state.cash_by_player_id[0];
+                draw_and_apply_card(&mut state, &rules, &mut strategies, 0, deck, crate::game::rng::DiceRoll { first_die: 1, second_die: 2 });
+                assert_eq!(state.cash_by_player_id[0], before + amount);
+                let events = strategies[0].diagnostic.borrow();
+                assert_eq!(
+                    events[0],
+                    GameEvent::CardDrawn {
+                        player_id: 0,
+                        deck,
+                        effect: card.effect
+                    }
+                );
+                assert_eq!(
+                    events[1],
+                    match target {
+                        Some(tile) => GameEvent::SalaryPaid {
+                            player_id: 0,
+                            amount,
+                            landed_on_go: tile == 0
+                        },
+                        None => GameEvent::BankRewardCollected { player_id: 0, amount, deck },
+                    }
+                );
+                if let Some(tile) = target {
+                    assert_eq!(events.last(), Some(&GameEvent::Landed { player_id: 0, tile_id: tile }));
+                } else {
+                    assert_eq!(events.len(), 2);
+                }
+                assert_public_events(&strategies, &events);
+            }
+        }
+    }
+
+    #[test]
+    fn free_parking_payout_is_public_and_cannot_be_collected_twice() {
+        use super::super::landing::{
+            RentModifier,
+            resolve_landing,
+        };
+        let rules = crate::game::ruleset::data::DEX_RULESET;
+        let mut state = GameState::<2>::create_starting_state(&rules, 7);
+        let mut strategies = observers();
+        state.position_by_player_id[0] = 20;
+        state.free_parking_jackpot = 350;
+        let before = state.cash_by_player_id[0];
+        for _ in 0..2 {
+            resolve_landing(
+                &mut state,
+                &rules,
+                &mut strategies,
+                0,
+                crate::game::rng::DiceRoll { first_die: 1, second_die: 2 },
+                RentModifier::Standard,
+            );
+        }
+        assert_eq!(state.cash_by_player_id[0], before + 350);
+        assert_eq!(state.free_parking_jackpot, 0);
+        assert_public_events(
+            &strategies,
+            &[
+                GameEvent::Landed { player_id: 0, tile_id: 20 },
+                GameEvent::FreeParkingCollected { player_id: 0, amount: 350 },
+                GameEvent::Landed { player_id: 0, tile_id: 20 },
+            ],
+        );
     }
 
     #[test]

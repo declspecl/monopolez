@@ -96,17 +96,23 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
 
     match card_effect {
         CardEffect::AdvanceToTile { tile_id } => {
-            advance_player_to_tile(game_state, ruleset, player_id, tile_id);
+            if let Some(event) = advance_player_to_tile(game_state, ruleset, player_id, tile_id) {
+                super::event::publish_event(strategies, player_index, event);
+            }
             resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
         },
         CardEffect::AdvanceToNearestRailroad => {
             let railroad_tile_id = find_next_tile_in_set(game_state.position_by_player_id[player_index], RAILROAD_TILE_SET_MASK);
-            advance_player_to_tile(game_state, ruleset, player_id, railroad_tile_id);
+            if let Some(event) = advance_player_to_tile(game_state, ruleset, player_id, railroad_tile_id) {
+                super::event::publish_event(strategies, player_index, event);
+            }
             resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::NearestRailroadCard);
         },
         CardEffect::AdvanceToNearestUtility => {
             let utility_tile_id = find_next_tile_in_set(game_state.position_by_player_id[player_index], UTILITY_TILE_SET_MASK);
-            advance_player_to_tile(game_state, ruleset, player_id, utility_tile_id);
+            if let Some(event) = advance_player_to_tile(game_state, ruleset, player_id, utility_tile_id) {
+                super::event::publish_event(strategies, player_index, event);
+            }
 
             let fresh_dice_roll = game_state.rng.roll_dice();
             super::event::publish_event(
@@ -131,7 +137,20 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         CardEffect::GetOutOfJailFree => {
             game_state.get_out_of_jail_free_card_holder_by_deck_kind[deck_kind as usize] = Some(player_id);
         },
-        CardEffect::CollectFromBank { amount } => game_state.cash_by_player_id[player_index] += amount as Cash,
+        CardEffect::CollectFromBank { amount } => {
+            game_state.cash_by_player_id[player_index] += amount as Cash;
+            if amount > 0 {
+                super::event::publish_event(
+                    strategies,
+                    player_index,
+                    super::event::GameEvent::BankRewardCollected {
+                        player_id,
+                        amount: amount as Cash,
+                        deck: deck_kind,
+                    },
+                );
+            }
+        },
         CardEffect::PayBank { amount } => charge_player(game_state, ruleset, strategies, player_id, amount as Cash, select_fee_creditor(ruleset)),
         CardEffect::CollectFromEachPlayer { amount } => {
             for other_player_id in 0..PLAYER_COUNT as PlayerId {

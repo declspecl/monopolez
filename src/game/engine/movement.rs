@@ -16,11 +16,11 @@ pub fn move_player_forward<const PLAYER_COUNT: usize>(
     ruleset: &Ruleset,
     player_id: PlayerId,
     tile_count: u8,
-) {
+) -> Option<super::event::GameEvent> {
     let current_tile_id = game_state.position_by_player_id[player_id as usize];
     let target_tile_id = ((current_tile_id as usize + tile_count as usize) % TILE_COUNT) as TileId;
 
-    advance_player_to_tile(game_state, ruleset, player_id, target_tile_id);
+    advance_player_to_tile(game_state, ruleset, player_id, target_tile_id)
 }
 
 pub fn advance_player_to_tile<const PLAYER_COUNT: usize>(
@@ -28,17 +28,25 @@ pub fn advance_player_to_tile<const PLAYER_COUNT: usize>(
     ruleset: &Ruleset,
     player_id: PlayerId,
     target_tile_id: TileId,
-) {
+) -> Option<super::event::GameEvent> {
     let player_index = player_id as usize;
     let current_tile_id = game_state.position_by_player_id[player_index];
 
-    if target_tile_id == GO_TILE_ID {
-        game_state.cash_by_player_id[player_index] += ruleset.go_landing_salary as Cash;
+    let amount = if target_tile_id == GO_TILE_ID {
+        ruleset.go_landing_salary as Cash
     } else if target_tile_id < current_tile_id {
-        game_state.cash_by_player_id[player_index] += ruleset.go_passing_salary as Cash;
-    }
+        ruleset.go_passing_salary as Cash
+    } else {
+        0
+    };
+    game_state.cash_by_player_id[player_index] += amount;
 
     game_state.position_by_player_id[player_index] = target_tile_id;
+    (amount > 0).then_some(super::event::GameEvent::SalaryPaid {
+        player_id,
+        amount,
+        landed_on_go: target_tile_id == GO_TILE_ID,
+    })
 }
 
 pub fn move_player_backward<const PLAYER_COUNT: usize>(

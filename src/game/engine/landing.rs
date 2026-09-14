@@ -73,8 +73,12 @@ pub fn resolve_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             super::event::publish_event(strategies, player_id as usize, event);
         },
         TileKind::FreeParking => {
-            game_state.cash_by_player_id[player_id as usize] += game_state.free_parking_jackpot;
+            let amount = game_state.free_parking_jackpot;
+            game_state.cash_by_player_id[player_id as usize] += amount;
             game_state.free_parking_jackpot = 0;
+            if amount > 0 {
+                super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::FreeParkingCollected { player_id, amount });
+            }
         },
         TileKind::Go | TileKind::Jail => {},
     }
