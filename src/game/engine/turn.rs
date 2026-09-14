@@ -87,7 +87,7 @@ pub fn apply_management_decision<const N: usize, S: PlayerStrategy>(
         return Ok(next_phase);
     };
     let event = execute_management_action(state, rules, player, management_phase, action)?;
-    strategies[player as usize].record_event(event);
+    super::event::publish_event(strategies, player as usize, event);
     Ok(phase)
 }
 
@@ -137,7 +137,7 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let player_id = game_state.current_player_id;
     match phase {
         TurnPhase::Start => {
-            strategies[player_id as usize].record_event(super::event::GameEvent::TurnStarted { player_id });
+            super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::TurnStarted { player_id });
             run_trade_phase(game_state, ruleset, strategies, player_id, PermittedBarterTimesMask::START_OF_TURN);
             TurnPhase::Unmortgaging
         },
@@ -161,11 +161,15 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         },
         TurnPhase::Rolling => {
             let dice_roll = game_state.rng.roll_dice();
-            strategies[player_id as usize].record_event(super::event::GameEvent::DiceRolled {
-                player_id,
-                first: dice_roll.first_die,
-                second: dice_roll.second_die,
-            });
+            super::event::publish_event(
+                strategies,
+                player_id as usize,
+                super::event::GameEvent::DiceRolled {
+                    player_id,
+                    first: dice_roll.first_die,
+                    second: dice_roll.second_die,
+                },
+            );
 
             if dice_roll.is_double() {
                 game_state.consecutive_double_count += 1;
@@ -224,11 +228,15 @@ fn roll_in_jail<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let jail_bail_amount = ruleset.jail_bail_amount as Cash;
 
     let dice_roll = game_state.rng.roll_dice();
-    strategies[player_index].record_event(super::event::GameEvent::DiceRolled {
-        player_id,
-        first: dice_roll.first_die,
-        second: dice_roll.second_die,
-    });
+    super::event::publish_event(
+        strategies,
+        player_index,
+        super::event::GameEvent::DiceRolled {
+            player_id,
+            first: dice_roll.first_die,
+            second: dice_roll.second_die,
+        },
+    );
     if dice_roll.is_double() {
         release_player_from_jail(game_state, player_id);
 

@@ -119,6 +119,13 @@ impl RecordedStrategy {
 }
 
 impl PlayerStrategy for RecordedStrategy {
+    fn observe_public_event(
+        &mut self,
+        event: GameEvent,
+    ) {
+        self.strategy.observe_public_event(event);
+    }
+
     fn choose_liquidation_action<const N: usize>(
         &mut self,
         state: &GameState<N>,

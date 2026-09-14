@@ -30,6 +30,13 @@ pub enum AnyStrategy {
 }
 
 impl PlayerStrategy for AnyStrategy {
+    fn observe_public_event(
+        &mut self,
+        event: crate::game::engine::event::GameEvent,
+    ) {
+        delegate_to_strategy!(self, observe_public_event, event)
+    }
+
     fn choose_liquidation_action<const N: usize>(
         &mut self,
         state: &GameState<N>,

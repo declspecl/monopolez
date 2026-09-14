@@ -56,7 +56,7 @@ pub fn resolve_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     rent_modifier: RentModifier,
 ) {
     let tile_id = game_state.position_by_player_id[player_id as usize];
-    strategies[player_id as usize].record_event(super::event::GameEvent::Landed { player_id, tile_id });
+    super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::Landed { player_id, tile_id });
 
     match TILE_KIND_BY_TILE_ID[tile_id as usize] {
         TileKind::Property | TileKind::Railroad | TileKind::Utility => {
@@ -111,7 +111,7 @@ fn offer_purchase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         && strategies[player_index].should_purchase_property(game_state, ruleset, player_id, tile_id)
         && let Ok(event) = super::action::execute_purchase(game_state, player_id, tile_id)
     {
-        strategies[player_index].record_event(event);
+        super::event::publish_event(strategies, player_index, event);
         return;
     }
     if game_state.board.get_tile_owner(tile_id).is_none() && ruleset.property_purchase_decline_mode == PropertyPurchaseDeclineMode::Auction {

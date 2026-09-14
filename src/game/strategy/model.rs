@@ -17,6 +17,12 @@ pub enum JailAction {
 }
 
 pub trait PlayerStrategy {
+    fn observe_public_event(
+        &mut self,
+        _event: crate::game::engine::event::GameEvent,
+    ) {
+    }
+
     fn choose_liquidation_action<const N: usize>(
         &mut self,
         state: &GameState<N>,
