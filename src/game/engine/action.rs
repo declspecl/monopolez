@@ -13,6 +13,7 @@ use super::mortgage::{
     unmortgage_tile,
 };
 use crate::game::board::model::PlayerId;
+use crate::game::card::model::DeckKind;
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
 use crate::game::strategy::model::{
@@ -140,18 +141,21 @@ pub fn execute_jail_action<const N: usize, S: PlayerStrategy>(
     match action {
         JailAction::RollForDoubles => return Ok(JailResolution::AttemptDoubles),
         JailAction::UseGetOutOfJailFreeCard => {
-            let holder = state
+            let (holder, deck) = state
                 .get_out_of_jail_free_card_holder_by_deck_kind
                 .iter_mut()
-                .find(|holder| **holder == Some(player))
+                .zip([DeckKind::Chance, DeckKind::CommunityChest])
+                .find(|(holder, _)| **holder == Some(player))
                 .ok_or(ActionError::IllegalAction)?;
             *holder = None;
+            super::event::publish_event(strategies, player as usize, GameEvent::JailCardUsed { player_id: player, deck });
         },
         JailAction::PayBail => {
             super::payment::charge_player(state, rules, strategies, player, rules.jail_bail_amount as Cash, super::payment::select_fee_creditor(rules));
         },
     }
-    super::movement::release_player_from_jail(state, player);
+    let event = super::movement::release_player_from_jail(state, player);
+    super::event::publish_event(strategies, player as usize, event);
     Ok(JailResolution::Released)
 }
 

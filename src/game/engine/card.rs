@@ -124,7 +124,10 @@ fn apply_card_effect<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             move_player_backward(game_state, player_id, tile_count);
             resolve_landing(game_state, ruleset, strategies, player_id, dice_roll, RentModifier::Standard);
         },
-        CardEffect::GoToJail => send_player_to_jail(game_state, player_id),
+        CardEffect::GoToJail => {
+            let event = send_player_to_jail(game_state, player_id);
+            super::event::publish_event(strategies, player_index, event);
+        },
         CardEffect::GetOutOfJailFree => {
             game_state.get_out_of_jail_free_card_holder_by_deck_kind[deck_kind as usize] = Some(player_id);
         },

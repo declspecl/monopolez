@@ -174,7 +174,8 @@ pub fn advance_turn<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
             if dice_roll.is_double() {
                 game_state.consecutive_double_count += 1;
                 if game_state.consecutive_double_count == MAX_CONSECUTIVE_DOUBLE_COUNT {
-                    send_player_to_jail(game_state, player_id);
+                    let event = send_player_to_jail(game_state, player_id);
+                    super::event::publish_event(strategies, player_id as usize, event);
                     return TurnPhase::End;
                 }
             }
@@ -238,7 +239,8 @@ fn roll_in_jail<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         },
     );
     if dice_roll.is_double() {
-        release_player_from_jail(game_state, player_id);
+        let event = release_player_from_jail(game_state, player_id);
+        super::event::publish_event(strategies, player_index, event);
 
         return JailTurnResult::MoveWithoutRollingAgain(dice_roll);
     }
@@ -253,7 +255,8 @@ fn roll_in_jail<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         return JailTurnResult::StayInJail;
     }
 
-    release_player_from_jail(game_state, player_id);
+    let event = release_player_from_jail(game_state, player_id);
+    super::event::publish_event(strategies, player_index, event);
 
     JailTurnResult::MoveWithoutRollingAgain(dice_roll)
 }

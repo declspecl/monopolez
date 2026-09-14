@@ -226,7 +226,7 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 4,
+        schema_version: 5,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
@@ -250,8 +250,8 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if !(1..=4).contains(&trace.schema_version) || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1 through 4 and a positive turn limit");
+    if !(1..=5).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 through 5 and a positive turn limit");
     }
     if trace.schema_version == 1 && !trace.events.is_empty() {
         bail!("schema version 1 does not support event verification");
@@ -331,15 +331,33 @@ mod tests {
         trace: &mut GameTrace,
         version: u32,
     ) {
-        for record in &mut trace.events {
-            record.decisions_before = trace.decisions[..record.decisions_before]
-                .iter()
-                .filter(|decision| decision.request["method"] != "choose_liquidation_action")
-                .count();
+        if version < 4 {
+            for record in &mut trace.events {
+                record.decisions_before = trace.decisions[..record.decisions_before]
+                    .iter()
+                    .filter(|decision| decision.request["method"] != "choose_liquidation_action")
+                    .count();
+            }
+            trace.decisions.retain(|decision| decision.request["method"] != "choose_liquidation_action");
         }
-        trace.decisions.retain(|decision| decision.request["method"] != "choose_liquidation_action");
         trace.events.retain(|record| record.event.trace_version() <= version);
         trace.schema_version = version;
+    }
+
+    #[test]
+    fn replay_supports_traces_before_jail_events() {
+        let trace = record_game(DEX_RULESET, vec![BASELINE_STRATEGY; 4], 7, 1000).unwrap();
+        assert!(trace.events.iter().any(|record| matches!(record.event, GameEvent::SentToJail { .. })));
+        assert!(trace.events.iter().any(|record| matches!(record.event, GameEvent::ReleasedFromJail { .. })));
+        for version in 1..=4 {
+            let mut legacy = trace.clone();
+            downgrade(&mut legacy, version);
+            replay_game(&legacy).unwrap();
+        }
+        let mut corrupt = trace;
+        let event = corrupt.events.iter_mut().find(|record| matches!(record.event, GameEvent::SentToJail { .. })).unwrap();
+        event.event = GameEvent::ReleasedFromJail { player_id: 0 };
+        assert!(replay_game(&corrupt).is_err());
     }
 
     #[test]

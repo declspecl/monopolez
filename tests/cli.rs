@@ -124,7 +124,7 @@ fn trace_round_trips_through_replay_cli() {
     let replay: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(replay["verified"], true);
     assert_eq!(replay["turn_count"], 20);
-    assert_eq!(trace["schema_version"], 4);
+    assert_eq!(trace["schema_version"], 5);
     assert_eq!(replay["events_verified"], true);
     assert_eq!(replay["event_count"], trace["events"].as_array().unwrap().len());
 }

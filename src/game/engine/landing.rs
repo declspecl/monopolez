@@ -68,7 +68,10 @@ pub fn resolve_landing<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
         },
         TileKind::Chance => draw_and_apply_card(game_state, ruleset, strategies, player_id, DeckKind::Chance, dice_roll),
         TileKind::CommunityChest => draw_and_apply_card(game_state, ruleset, strategies, player_id, DeckKind::CommunityChest, dice_roll),
-        TileKind::GoToJail => send_player_to_jail(game_state, player_id),
+        TileKind::GoToJail => {
+            let event = send_player_to_jail(game_state, player_id);
+            super::event::publish_event(strategies, player_id as usize, event);
+        },
         TileKind::FreeParking => {
             game_state.cash_by_player_id[player_id as usize] += game_state.free_parking_jackpot;
             game_state.free_parking_jackpot = 0;

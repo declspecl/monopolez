@@ -55,19 +55,21 @@ pub fn move_player_backward<const PLAYER_COUNT: usize>(
 pub fn send_player_to_jail<const PLAYER_COUNT: usize>(
     game_state: &mut GameState<PLAYER_COUNT>,
     player_id: PlayerId,
-) {
+) -> super::event::GameEvent {
     let player_index = player_id as usize;
 
     game_state.position_by_player_id[player_index] = JAIL_TILE_ID;
     game_state.jail_turn_count_by_player_id[player_index] = 0;
     game_state.jailed_players |= 1 << player_id;
     game_state.consecutive_double_count = 0;
+    super::event::GameEvent::SentToJail { player_id }
 }
 
 pub fn release_player_from_jail<const PLAYER_COUNT: usize>(
     game_state: &mut GameState<PLAYER_COUNT>,
     player_id: PlayerId,
-) {
+) -> super::event::GameEvent {
     game_state.jail_turn_count_by_player_id[player_id as usize] = 0;
     game_state.jailed_players &= !(1 << player_id);
+    super::event::GameEvent::ReleasedFromJail { player_id }
 }
