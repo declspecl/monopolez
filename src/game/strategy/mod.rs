@@ -4,3 +4,4 @@ pub mod configurable;
 pub mod data;
 pub mod greedy;
 pub mod model;
+pub mod observation;
