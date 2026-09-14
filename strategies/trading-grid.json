@@ -1,0 +1,4 @@
+{
+  "offers_property_swaps": [false, true],
+  "monopoly_trade_premium_percent": [0, 100, 300]
+}
