@@ -6,3 +6,5 @@ pub mod data;
 pub mod greedy;
 pub mod model;
 pub mod observation;
+pub mod rollout;
+pub mod rollout_player;

@@ -151,6 +151,21 @@ impl Candidate {
                     }
                     holder = None;
                 },
+                GameEvent::TradeExecuted { offer } => {
+                    let bit = 1 << deck as u8;
+                    if offer.offered_get_out_of_jail_free_cards & bit != 0 {
+                        if holder != Some(offer.proposer_player_id) {
+                            return None;
+                        }
+                        holder = Some(offer.recipient_player_id);
+                    }
+                    if offer.requested_get_out_of_jail_free_cards & bit != 0 {
+                        if holder != Some(offer.recipient_player_id) {
+                            return None;
+                        }
+                        holder = Some(offer.proposer_player_id);
+                    }
+                },
                 GameEvent::Bankrupt { player_id, creditor, .. } if holder == Some(player_id) => {
                     holder = match creditor {
                         Creditor::Player(player) => Some(player),
@@ -266,6 +281,28 @@ mod tests {
             assert_eq!(replay(deck, sample, history), (sample.next_draw_position, belief.holder()));
         }
         belief
+    }
+
+    #[test]
+    fn traded_jail_cards_can_be_used_by_the_new_holder() {
+        use crate::game::trade::model::TradeOffer;
+        for requested in [false, true] {
+            let deck = DeckKind::Chance;
+            let offer = TradeOffer {
+                proposer_player_id: if requested { 1 } else { 0 },
+                recipient_player_id: if requested { 0 } else { 1 },
+                offered_cash: 0,
+                requested_cash: 0,
+                offered_tiles: 0,
+                requested_tiles: 0,
+                offered_get_out_of_jail_free_cards: u8::from(!requested),
+                requested_get_out_of_jail_free_cards: u8::from(requested),
+            };
+            let mut history = vec![draw(deck, CardEffect::GetOutOfJailFree), GameEvent::TradeExecuted { offer }];
+            assert_eq!(DeckBelief::from_start_history(deck, &history).unwrap().holder(), Some(1));
+            history.push(GameEvent::JailCardUsed { player_id: 1, deck });
+            assert_eq!(DeckBelief::from_start_history(deck, &history).unwrap().holder(), None);
+        }
     }
 
     #[test]
