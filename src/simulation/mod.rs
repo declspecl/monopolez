@@ -5,6 +5,7 @@ pub mod grid;
 pub mod model;
 pub mod paired;
 pub mod provenance;
+pub mod rollout;
 pub mod runner;
 pub mod tournament;
 pub mod trace;

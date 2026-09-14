@@ -25,7 +25,7 @@ pub struct PairedResult {
 }
 
 impl PairedResult {
-    fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         Self {
             candidate: TournamentResult::empty(),
             baseline: TournamentResult::empty(),
@@ -36,7 +36,7 @@ impl PairedResult {
         }
     }
 
-    fn combine(
+    pub(super) fn combine(
         self,
         other: Self,
     ) -> Self {

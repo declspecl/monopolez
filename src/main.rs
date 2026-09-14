@@ -116,6 +116,18 @@ struct CliArguments {
     #[arg(long)]
     vs_pool: bool,
 
+    #[arg(long, requires = "vs_pool", conflicts_with_all = ["compare_strategy_file", "analyze", "tune", "sweep", "head_to_head", "print_ruleset", "strategies", "cash_reserve", "tune_pool_file"])]
+    rollout: bool,
+
+    #[arg(long, requires = "rollout", default_value_t = 8)]
+    rollout_samples: u32,
+
+    #[arg(long, requires = "rollout", default_value_t = 500)]
+    rollout_turns: u32,
+
+    #[arg(long, requires = "rollout", default_value_t = 0)]
+    rollout_seed: u64,
+
     #[arg(long, requires = "vs_pool", help = "Baseline strategy JSON for an identical-seed paired comparison", conflicts_with_all = ["analyze", "tune", "head_to_head", "print_ruleset"])]
     compare_strategy_file: Option<PathBuf>,
 
@@ -354,6 +366,43 @@ fn main() -> Result<()> {
             player_count: arguments.player_count,
         };
 
+        if arguments.rollout {
+            let rollout = game::strategy::rollout::RolloutConfig {
+                seed: arguments.rollout_seed,
+                sample_count: arguments.rollout_samples,
+                max_turn_count: arguments.rollout_turns,
+            };
+            let report = simulation::rollout::benchmark(&ruleset, candidate, &opponent_pool, &tournament_config, rollout)?;
+            if arguments.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1, "mode": "paired_rollout_comparison", "build": BuildProvenance::current(),
+                        "ruleset": ruleset, "config": tournament_config, "baseline": candidate, "opponent_pool": opponent_pool,
+                        "rollout": rollout, "continuation_model": "candidate_baseline_for_all_seats",
+                        "score": "win_count_unfinished_counts_as_non_win", "tie_break": "retain_baseline_then_legal_action_order",
+                        "pairing": "same_seed_seat_and_opponent_lineup", "rollout_turn_unit": "individual_player_turn_including_current_partial_turn",
+                        "win_rate_difference": report.paired.win_rate_difference(), "report": report
+                    }))?
+                );
+            } else {
+                println!(
+                    "rollout wins {}  baseline wins {}  games each {}",
+                    report.paired.candidate.candidate_win_count, report.paired.baseline.candidate_win_count, arguments.game_count
+                );
+                println!(
+                    "rollout {:.3}s  baseline {:.3}s  decisions {}  changed {}  simulated games {}  unfinished {}  failures {}",
+                    report.rollout_elapsed_seconds,
+                    report.baseline_elapsed_seconds,
+                    report.stats.decisions,
+                    report.stats.changed_decisions,
+                    report.stats.simulated_games,
+                    report.stats.unfinished_games,
+                    report.stats.failures
+                );
+            }
+            return Ok(());
+        }
         if let Some(path) = &arguments.compare_strategy_file {
             let baseline: ConfigurableStrategy = serde_json::from_str(&fs::read_to_string(path).with_context(|| format!("failed to read baseline strategy {}", path.display()))?)?;
             let result = simulation::paired::compare_policies(&ruleset, candidate, baseline, &opponent_pool, &tournament_config)?;

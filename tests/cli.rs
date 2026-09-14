@@ -11,6 +11,39 @@ fn run_json(arguments: &[&str]) -> serde_json::Value {
 }
 
 #[test]
+fn rollout_cli_reports_paired_results_cost_and_resolved_settings() {
+    let output = run_json(&[
+        "--vs-pool",
+        "--rollout",
+        "--json",
+        "--game-count",
+        "2",
+        "--player-count",
+        "2",
+        "--max-turn-count",
+        "100",
+        "--rollout-samples",
+        "2",
+        "--rollout-turns",
+        "1",
+        "--rollout-seed",
+        "19",
+    ]);
+    assert_eq!(output["mode"], "paired_rollout_comparison");
+    assert_eq!(output["rollout"]["seed"], 19);
+    assert_eq!(output["rollout"]["sample_count"], 2);
+    assert_eq!(output["rollout"]["max_turn_count"], 1);
+    assert_eq!(output["continuation_model"], "candidate_baseline_for_all_seats");
+    assert_eq!(output["report"]["paired"]["candidate"]["game_count"], 2);
+    assert_eq!(output["report"]["paired"]["baseline"]["game_count"], 2);
+    assert_eq!(output["report"]["stats"]["failures"], 0);
+    assert!(output["report"]["stats"]["decisions"].as_u64().unwrap() > 0);
+    for args in [vec!["--rollout"], vec!["--vs-pool", "--rollout", "--rollout-samples", "0"], vec!["--vs-pool", "--rollout", "--analyze"]] {
+        assert!(!Command::new(env!("CARGO_BIN_EXE_monopolez")).args(args).output().unwrap().status.success());
+    }
+}
+
+#[test]
 fn analysis_records_resolved_inputs_and_excludes_short_games() {
     let output = run_json(&[
         "--analyze",
