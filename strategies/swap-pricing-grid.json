@@ -1,0 +1,4 @@
+{
+  "offers_property_swaps": [false, true],
+  "property_swap_offer_percent": [100, 125, 150, 200, 300, 400]
+}

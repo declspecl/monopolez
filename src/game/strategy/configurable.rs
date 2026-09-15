@@ -73,6 +73,8 @@ pub struct ConfigurableStrategy {
     #[serde(default)]
     pub offers_property_swaps: bool,
     #[serde(default)]
+    pub property_swap_offer_percent: Option<Cash>,
+    #[serde(default)]
     pub monopoly_trade_premium_percent: Cash,
     pub pays_bail_when_affordable: bool,
     #[serde(default)]
@@ -96,6 +98,7 @@ impl ConfigurableStrategy {
             trade_offer_percent: 150,
             trade_accept_percent: 100,
             offers_property_swaps: false,
+            property_swap_offer_percent: None,
             monopoly_trade_premium_percent: 0,
             pays_bail_when_affordable: false,
             mortgages_before_selling_buildings: false,
