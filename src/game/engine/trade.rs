@@ -43,7 +43,25 @@ pub fn run_trade_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     let recipient_index = trade_offer.recipient_player_id as usize;
     if !strategies[recipient_index].should_accept_trade(game_state, ruleset, trade_offer.recipient_player_id, &trade_offer) {
         super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::TradeRejected { offer: trade_offer });
-        return false;
+        let Some(counteroffer) = strategies[recipient_index].counter_trade_offer(game_state, ruleset, trade_offer.recipient_player_id, &trade_offer) else {
+            return false;
+        };
+        if counteroffer.proposer_player_id != trade_offer.recipient_player_id
+            || counteroffer.recipient_player_id != trade_offer.proposer_player_id
+            || !is_trade_permitted(game_state, ruleset, &counteroffer)
+        {
+            return false;
+        }
+        super::event::publish_event(strategies, recipient_index, super::event::GameEvent::TradeProposed { offer: counteroffer });
+        if !strategies[player_id as usize].should_accept_counteroffer(game_state, ruleset, player_id, &trade_offer, &counteroffer) {
+            super::event::publish_event(strategies, recipient_index, super::event::GameEvent::TradeRejected { offer: counteroffer });
+            return false;
+        }
+        if !execute_trade(game_state, ruleset, &counteroffer) {
+            return false;
+        }
+        super::event::publish_event(strategies, recipient_index, super::event::GameEvent::TradeExecuted { offer: counteroffer });
+        return true;
     }
 
     if !execute_trade(game_state, ruleset, &trade_offer) {
@@ -221,6 +239,7 @@ pub fn calculate_tile_set_purchase_value(tiles: TileSetMask) -> Cash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::strategy::configurable::ConfigurableStrategy;
 
     const PARK_PLACE_TILE_ID: u8 = 37;
     const BOARDWALK_TILE_ID: u8 = 39;
@@ -342,6 +361,50 @@ mod tests {
         state.cash_by_player_id[1] = Cash::MAX;
         let original = state;
         assert!(!execute_trade(&mut state, &ruleset, &create_trade_offer()));
+        assert_eq!(state, original);
+    }
+
+    #[test]
+    fn executes_one_counteroffer_when_the_original_proposer_accepts() {
+        let rules = Ruleset::default();
+        let mut state = create_trade_state(&rules);
+        let mut strategies = [
+            ConfigurableStrategy {
+                trade_offer_percent: 150,
+                trade_counteroffer_limit_percent: Some(250),
+                ..ConfigurableStrategy::new()
+            },
+            ConfigurableStrategy {
+                trade_accept_percent: 200,
+                makes_trade_counteroffers: true,
+                ..ConfigurableStrategy::new()
+            },
+        ];
+
+        assert!(run_trade_phase(&mut state, &rules, &mut strategies, 0, PermittedBarterTimesMask::START_OF_TURN));
+        assert_eq!(state.board.owned_tiles_by_player_id, [(1 << PARK_PLACE_TILE_ID) | (1 << BOARDWALK_TILE_ID), 0]);
+        assert_eq!(state.cash_by_player_id, [699, 2301]);
+    }
+
+    #[test]
+    fn declining_the_only_counteroffer_ends_the_trade() {
+        let rules = Ruleset::default();
+        let original = create_trade_state(&rules);
+        let mut state = original;
+        let mut strategies = [
+            ConfigurableStrategy {
+                trade_offer_percent: 150,
+                trade_counteroffer_limit_percent: Some(200),
+                ..ConfigurableStrategy::new()
+            },
+            ConfigurableStrategy {
+                trade_accept_percent: 200,
+                makes_trade_counteroffers: true,
+                ..ConfigurableStrategy::new()
+            },
+        ];
+
+        assert!(!run_trade_phase(&mut state, &rules, &mut strategies, 0, PermittedBarterTimesMask::START_OF_TURN));
         assert_eq!(state, original);
     }
 }

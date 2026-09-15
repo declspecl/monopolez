@@ -172,6 +172,8 @@ impl PlayerStrategy for RolloutStrategy {
     delegate!(choose_tile_to_unmortgage, Option<TileId>);
     delegate!(propose_trade, Option<TradeOffer>);
     delegate!(should_accept_trade, bool, offer: &TradeOffer);
+    delegate!(counter_trade_offer, Option<TradeOffer>, rejected_offer: &TradeOffer);
+    delegate!(should_accept_counteroffer, bool, original_offer: &TradeOffer, counteroffer: &TradeOffer);
     delegate!(choose_liquidation_action, Option<crate::game::engine::liquidation::LiquidationAction>, amount: Cash);
 }
 

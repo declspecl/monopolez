@@ -116,6 +116,7 @@ macro_rules! record_decision {
 
 impl RecordedStrategy {
     record_decision!(choose_liquidation_action, Option<crate::game::engine::liquidation::LiquidationAction>, None, required_amount: Cash);
+    record_decision!(counter_trade_offer, Option<TradeOffer>, None, rejected_offer: &TradeOffer);
 }
 
 impl PlayerStrategy for RecordedStrategy {
@@ -142,6 +143,21 @@ impl PlayerStrategy for RecordedStrategy {
         }
         drop(tape);
         RecordedStrategy::choose_liquidation_action(self, state, rules, player, required_amount)
+    }
+
+    fn counter_trade_offer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        let tape = self.tape.borrow();
+        if tape.error.is_some() || tape.replay && tape.event_version < 8 {
+            return None;
+        }
+        drop(tape);
+        RecordedStrategy::counter_trade_offer(self, state, rules, player, rejected_offer)
     }
 
     fn record_event(
@@ -183,6 +199,7 @@ impl PlayerStrategy for RecordedStrategy {
     record_decision!(choose_tile_to_unmortgage, Option<TileId>, None);
     record_decision!(propose_trade, Option<TradeOffer>, None);
     record_decision!(should_accept_trade, bool, false, trade_offer: &TradeOffer);
+    record_decision!(should_accept_counteroffer, bool, false, original_offer: &TradeOffer, counteroffer: &TradeOffer);
 }
 
 fn valid_response(
@@ -226,7 +243,7 @@ pub fn record_game(
     max_turn_count: u32,
 ) -> Result<GameTrace> {
     let mut trace = GameTrace {
-        schema_version: 7,
+        schema_version: 8,
         build: serde_json::to_value(BuildProvenance::current())?,
         ruleset,
         strategies,
@@ -250,8 +267,8 @@ fn dispatch(
     trace: &mut GameTrace,
     replay: bool,
 ) -> Result<()> {
-    if !(1..=7).contains(&trace.schema_version) || trace.max_turn_count == 0 {
-        bail!("trace requires schema version 1 through 7 and a positive turn limit");
+    if !(1..=8).contains(&trace.schema_version) || trace.max_turn_count == 0 {
+        bail!("trace requires schema version 1 through 8 and a positive turn limit");
     }
     if trace.schema_version == 1 && !trace.events.is_empty() {
         bail!("schema version 1 does not support event verification");
@@ -331,14 +348,15 @@ mod tests {
         trace: &mut GameTrace,
         version: u32,
     ) {
-        if version < 4 {
+        if version < 8 {
+            let unsupported = |decision: &Decision| {
+                version < 4 && decision.request["method"] == "choose_liquidation_action"
+                    || version < 8 && matches!(decision.request["method"].as_str(), Some("counter_trade_offer" | "should_accept_counteroffer"))
+            };
             for record in &mut trace.events {
-                record.decisions_before = trace.decisions[..record.decisions_before]
-                    .iter()
-                    .filter(|decision| decision.request["method"] != "choose_liquidation_action")
-                    .count();
+                record.decisions_before = trace.decisions[..record.decisions_before].iter().filter(|decision| !unsupported(decision)).count();
             }
-            trace.decisions.retain(|decision| decision.request["method"] != "choose_liquidation_action");
+            trace.decisions.retain(|decision| !unsupported(decision));
         }
         trace.events.retain(|record| record.event.trace_version() <= version);
         trace.schema_version = version;

@@ -112,4 +112,25 @@ impl PlayerStrategy for AnyStrategy {
     ) -> bool {
         delegate_to_strategy!(self, should_accept_trade, game_state, ruleset, player_id, trade_offer)
     }
+
+    fn counter_trade_offer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        delegate_to_strategy!(self, counter_trade_offer, state, rules, player, rejected_offer)
+    }
+
+    fn should_accept_counteroffer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        original_offer: &TradeOffer,
+        counteroffer: &TradeOffer,
+    ) -> bool {
+        delegate_to_strategy!(self, should_accept_counteroffer, state, rules, player, original_offer, counteroffer)
+    }
 }

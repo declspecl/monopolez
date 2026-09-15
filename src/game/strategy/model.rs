@@ -101,6 +101,16 @@ pub trait PlayerStrategy {
         player_id: PlayerId,
     ) -> Option<TradeOffer>;
 
+    fn counter_trade_offer<const PLAYER_COUNT: usize>(
+        &mut self,
+        _game_state: &GameState<PLAYER_COUNT>,
+        _ruleset: &Ruleset,
+        _player_id: PlayerId,
+        _rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        None
+    }
+
     fn should_accept_trade<const PLAYER_COUNT: usize>(
         &mut self,
         game_state: &GameState<PLAYER_COUNT>,
@@ -108,4 +118,15 @@ pub trait PlayerStrategy {
         player_id: PlayerId,
         trade_offer: &TradeOffer,
     ) -> bool;
+
+    fn should_accept_counteroffer<const PLAYER_COUNT: usize>(
+        &mut self,
+        game_state: &GameState<PLAYER_COUNT>,
+        ruleset: &Ruleset,
+        player_id: PlayerId,
+        _original_offer: &TradeOffer,
+        counteroffer: &TradeOffer,
+    ) -> bool {
+        self.should_accept_trade(game_state, ruleset, player_id, counteroffer)
+    }
 }

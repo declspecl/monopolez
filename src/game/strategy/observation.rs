@@ -109,6 +109,21 @@ pub trait ObservedPolicy {
     ) -> bool {
         false
     }
+    fn counter_trade_offer(
+        &mut self,
+        _observation: PublicObservation<'_>,
+        _rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        None
+    }
+    fn should_accept_counteroffer(
+        &mut self,
+        observation: PublicObservation<'_>,
+        _original_offer: &TradeOffer,
+        counteroffer: &TradeOffer,
+    ) -> bool {
+        self.should_accept_trade(observation, counteroffer)
+    }
 
     fn choose_jail_action(
         &mut self,
@@ -192,6 +207,26 @@ impl<P: ObservedPolicy> PlayerStrategy for ObservedStrategy<P> {
         offer: &TradeOffer,
     ) -> bool {
         self.policy.should_accept_trade(PublicObservation::new(state, rules, player, &self.history), offer)
+    }
+    fn counter_trade_offer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        self.policy.counter_trade_offer(PublicObservation::new(state, rules, player, &self.history), rejected_offer)
+    }
+    fn should_accept_counteroffer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        original_offer: &TradeOffer,
+        counteroffer: &TradeOffer,
+    ) -> bool {
+        self.policy
+            .should_accept_counteroffer(PublicObservation::new(state, rules, player, &self.history), original_offer, counteroffer)
     }
 
     fn choose_jail_action<const N: usize>(

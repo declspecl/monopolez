@@ -13,7 +13,6 @@ use crate::game::board::data::{
 };
 use crate::game::board::model::PlayerId;
 use crate::game::engine::improvement::can_improve_property;
-use crate::game::engine::trade::calculate_tile_set_purchase_value;
 use crate::game::ruleset::model::Ruleset;
 use crate::game::state::model::GameState;
 use crate::game::tile::data::PROPERTY_COUNT;
@@ -76,6 +75,10 @@ pub struct ConfigurableStrategy {
     pub property_swap_offer_percent: Option<Cash>,
     #[serde(default)]
     pub monopoly_trade_premium_percent: Cash,
+    #[serde(default)]
+    pub makes_trade_counteroffers: bool,
+    #[serde(default)]
+    pub trade_counteroffer_limit_percent: Option<Cash>,
     pub pays_bail_when_affordable: bool,
     #[serde(default)]
     pub mortgages_before_selling_buildings: bool,
@@ -100,6 +103,8 @@ impl ConfigurableStrategy {
             offers_property_swaps: false,
             property_swap_offer_percent: None,
             monopoly_trade_premium_percent: 0,
+            makes_trade_counteroffers: false,
+            trade_counteroffer_limit_percent: None,
             pays_bail_when_affordable: false,
             mortgages_before_selling_buildings: false,
             jail_camping_unowned_tile_threshold: None,
@@ -329,25 +334,32 @@ impl PlayerStrategy for ConfigurableStrategy {
         player_id: PlayerId,
         trade_offer: &TradeOffer,
     ) -> bool {
-        let mut received_value = trade_offer.offered_cash as u128 + calculate_tile_set_purchase_value(trade_offer.offered_tiles) as u128;
-        let mut given_value = trade_offer.requested_cash as u128 + calculate_tile_set_purchase_value(trade_offer.requested_tiles) as u128;
-        if self.monopoly_trade_premium_percent > 0 {
-            let owned = game_state.board.owned_tiles_by_player_id[player_id as usize];
-            let after = (owned & !trade_offer.requested_tiles) | trade_offer.offered_tiles;
-            for group in TILE_SET_MASK_BY_OWNERSHIP_GROUP {
-                let before_complete = owned & group == group;
-                let after_complete = after & group == group;
-                let premium = calculate_tile_set_purchase_value(group) as u128 * self.monopoly_trade_premium_percent as u128 / PERCENT_DIVISOR as u128;
-                if after_complete && !before_complete {
-                    received_value += premium;
-                }
-                if before_complete && !after_complete {
-                    given_value += premium;
-                }
-            }
-        }
+        let (received_value, given_value) = super::trading::trade_values(self, game_state, player_id, trade_offer);
 
         received_value * PERCENT_DIVISOR as u128 > given_value * self.trade_accept_percent as u128
+    }
+
+    fn counter_trade_offer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        rejected_offer: &TradeOffer,
+    ) -> Option<TradeOffer> {
+        self.makes_trade_counteroffers
+            .then(|| super::trading::counter_trade_offer(self, state, rules, player, rejected_offer))
+            .flatten()
+    }
+
+    fn should_accept_counteroffer<const N: usize>(
+        &mut self,
+        state: &GameState<N>,
+        rules: &Ruleset,
+        player: PlayerId,
+        original_offer: &TradeOffer,
+        counteroffer: &TradeOffer,
+    ) -> bool {
+        super::trading::should_accept_counteroffer(self, state, rules, player, original_offer, counteroffer)
     }
 }
 
