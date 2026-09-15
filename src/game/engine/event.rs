@@ -95,6 +95,12 @@ pub enum GameEvent {
     TradeExecuted {
         offer: TradeOffer,
     },
+    TradeProposed {
+        offer: TradeOffer,
+    },
+    TradeRejected {
+        offer: TradeOffer,
+    },
     BuildingPurchased {
         player_id: PlayerId,
         property_id: PropertyId,
@@ -121,6 +127,7 @@ pub enum GameEvent {
 impl GameEvent {
     pub const fn trace_version(self) -> u32 {
         match self {
+            Self::TradeProposed { .. } | Self::TradeRejected { .. } => 7,
             Self::SalaryPaid { .. } | Self::BankRewardCollected { .. } | Self::FreeParkingCollected { .. } => 6,
             Self::SentToJail { .. } | Self::ReleasedFromJail { .. } | Self::JailCardUsed { .. } => 5,
             Self::BuildingSold { .. } | Self::TileMortgaged { .. } => 3,

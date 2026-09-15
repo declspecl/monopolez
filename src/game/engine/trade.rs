@@ -38,9 +38,11 @@ pub fn run_trade_phase<const PLAYER_COUNT: usize, Strategy: PlayerStrategy>(
     if trade_offer.proposer_player_id != player_id || !is_trade_permitted(game_state, ruleset, &trade_offer) {
         return false;
     }
+    super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::TradeProposed { offer: trade_offer });
 
     let recipient_index = trade_offer.recipient_player_id as usize;
     if !strategies[recipient_index].should_accept_trade(game_state, ruleset, trade_offer.recipient_player_id, &trade_offer) {
+        super::event::publish_event(strategies, player_id as usize, super::event::GameEvent::TradeRejected { offer: trade_offer });
         return false;
     }
 
